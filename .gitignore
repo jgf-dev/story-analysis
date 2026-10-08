@@ -4,3 +4,14 @@
 .env
 __pycache__/
 *.pyc
+
+# JGF-12 internal dataset artifacts — never commit
+data/raw/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+data/*.log
+data/*.done
+insights_output/
