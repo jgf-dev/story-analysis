@@ -56,12 +56,31 @@ COMMIT_ROWS = 5_000             # SQLite commit interval
 PREVIEW_CHARS = 8_000           # stored preview length for all stories
 KEEP_FULL_TEXT_MAX_CHARS = 400_000  # cap on stored full text (defensive)
 
-# 64-bit primes/coeffs for MinHash (fixed for reproducibility)
-_MERSENNE = (1 << 61) - 1
-_COEFF_A = np.array([(i * 6364136223846793005 + 1442695040888963407) % _MERSENNE
-                     for i in range(1, NUM_PERMUTATIONS + 1)], dtype=np.uint64)
-_COEFF_B = np.array([(i * 2862933555777941757 + 3037000493) % _MERSENNE
-                     for i in range(1, NUM_PERMUTATIONS + 1)], dtype=np.uint64)
+# 32-bit Mersenne prime coefficients for MinHash (fixed for reproducibility).
+# Coefficients and shingle hashes are kept <= 2^31 so a*b fits in uint64
+# without overflow (an overflow here biases every permutation identically).
+_PRIME31 = (1 << 31) - 1
+
+
+def _coeff(seed: int) -> int:
+    x = (seed * 6364136223846793005 + 1442695040888963407) & ((1 << 64) - 1)
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9 & ((1 << 64) - 1)
+    x = (x ^ (x >> 27)) * 0x94d049bb133111eb & ((1 << 64) - 1)
+    x ^= x >> 31
+    return (x % (_PRIME31 - 1)) + 1
+
+
+_COEFF_A = np.array([_coeff(i * 2 + 1) for i in range(1, NUM_PERMUTATIONS + 1)], dtype=np.uint64)
+_COEFF_B = np.array([_coeff(i * 2 + 2) for i in range(1, NUM_PERMUTATIONS + 1)], dtype=np.uint64)
+
+
+def _mix64(x: np.ndarray) -> np.ndarray:
+    x = x ^ (x >> np.uint64(30))
+    x = x * np.uint64(0xbf58476d1ce4e5b9)
+    x = x ^ (x >> np.uint64(27))
+    x = x * np.uint64(0x94d049bb133111eb)
+    x = x ^ (x >> np.uint64(31))
+    return x
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +100,7 @@ def _word_id(word: str) -> int:
 
 
 def _shingle_hashes(text: str) -> np.ndarray:
-    """Word k-shingles hashed to uint64 via blake2b (deterministic, cached)."""
+    """Word k-shingles hashed to well-distributed uint64 ids (deterministic)."""
     words = text.split()
     if len(words) < SHINGLE_K:
         if not words:
@@ -89,27 +108,25 @@ def _shingle_hashes(text: str) -> np.ndarray:
         joined = " ".join(words).encode("utf-8")
         return np.array([int.from_bytes(hashlib.blake2b(joined, digest_size=8).digest(), "little")],
                         dtype=np.uint64)
-    hashes = np.empty(len(words) - SHINGLE_K + 1, dtype=np.uint64)
     # Hash each word once (cached), then combine positionally (rolling shingle).
     word_hashes = np.array([_word_id(w) for w in words], dtype=np.uint64)
-    base = 1_000_003
+    base = np.uint64(1_000_003)
+    rolling = np.zeros(len(words) - SHINGLE_K + 1, dtype=np.uint64)
     for off in range(SHINGLE_K):
-        wh = word_hashes[off: off + len(hashes)]
-        if off == 0:
-            hashes = wh % _MERSENNE
-        else:
-            hashes = (hashes * np.uint64(base) + wh) % _MERSENNE
-    return hashes
+        wh = word_hashes[off: off + len(rolling)]
+        rolling = rolling * base + wh
+    return _mix64(rolling)
 
 
 def minhash_signature(text: str) -> np.ndarray:
     """128-dim MinHash signature of the first MINHASH_SOURCE_CHARS of text."""
-    hashes = _shingle_hashes(text[:MINHASH_SOURCE_CHARS])
-    if hashes.size == 0:
+    shingles = _shingle_hashes(text[:MINHASH_SOURCE_CHARS])
+    if shingles.size == 0:
         return np.zeros(NUM_PERMUTATIONS, dtype=np.uint32)
-    h = hashes.astype(np.uint64)
-    # Vectorized: (A[:, None] * h[None, :] + B[:, None]) % M -> min over axis 1
-    vals = (np.multiply.outer(_COEFF_A, h) + _COEFF_B[:, None]) % _MERSENNE
+    h = shingles % np.uint64(_PRIME31)
+    # (A[:, None] * h[None, :] + B[:, None]) % PRIME31 -> min over shingles.
+    # A, B, h < 2^31 so the product fits uint64 without overflow.
+    vals = (np.multiply.outer(_COEFF_A, h) + _COEFF_B[:, None]) % np.uint64(_PRIME31)
     sig = vals.min(axis=1).astype(np.uint32)
     return sig
 

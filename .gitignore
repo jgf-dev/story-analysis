@@ -15,3 +15,7 @@ data/raw/
 data/*.log
 data/*.done
 insights_output/
+*.sqlite-wal
+*.sqlite-shm
+*.db-journal
+data/catalog.sqlite*
