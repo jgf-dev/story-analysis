@@ -283,6 +283,28 @@ def process_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def process_batch(pool, raw_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Process a batch, splitting it across workers for real parallelism.
+
+    ``pool.map(func, (raw_batch,))`` submits the whole batch as a single task
+    and therefore runs on one worker only (the rest idle). Split the batch into
+    one contiguous chunk per process so every worker participates while
+    preserving the original row order.
+    """
+    if pool is None:
+        return process_rows(raw_batch)
+    n_workers = max(1, getattr(pool, "_processes", 1) or 1)
+    if n_workers == 1 or len(raw_batch) <= 1:
+        return pool.map(process_rows, (raw_batch,))[0]
+    chunk_size = (len(raw_batch) + n_workers - 1) // n_workers
+    chunks = [raw_batch[i:i + chunk_size]
+              for i in range(0, len(raw_batch), chunk_size)]
+    out: List[Dict[str, Any]] = []
+    for part in pool.map(process_rows, chunks):
+        out.extend(part)
+    return out
+
+
 def _norm_text_for_hash(clean_text: str) -> str:
     return clean_text[:200_000]
 
@@ -473,8 +495,12 @@ class FullCorpusIngester:
             """Yield raw row batches while tracking byte-offset checkpoints."""
             with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
                 if self.last_offset:
+                    # last_offset is always a completed-record boundary (it is
+                    # captured only after a full CSV record is parsed), so seek
+                    # lands exactly at the start of the next record. Do NOT
+                    # readline() here: that would discard the first line of the
+                    # next record and misalign every following multi-line row.
                     f.seek(self.last_offset)
-                    f.readline()  # skip partial record tail from checkpoint
                 else:
                     f.readline()  # skip CSV header
                 buf: List[str] = []
@@ -509,8 +535,7 @@ class FullCorpusIngester:
         pool = ctx.Pool(processes=max(1, workers)) if workers > 1 else None
         try:
             for raw_batch, offset, is_last in read_batches():
-                stories = (process_rows(raw_batch) if pool is None
-                           else pool.map(process_rows, (raw_batch,))[0])
+                stories = process_batch(pool, raw_batch)
                 self._flush_batch(stories, offset, stats, canonical_stats)
                 if self.rows_done % progress_every < BATCH_ROWS and self.rows_done:
                     self._log_progress(stats)
@@ -552,7 +577,16 @@ class FullCorpusIngester:
                 stats["dedup_errors"] += 1
                 is_canonical, dup_of, norm_hash = True, None, normalized_hash(
                     _norm_text_for_hash(story["clean_text"]))
-            self._write(story, is_canonical, dup_of, norm_hash)
+            try:
+                self._write(story, is_canonical, dup_of, norm_hash)
+            except Exception as exc:
+                # One malformed row must not abort a multi-hour full-corpus run.
+                stats["write_errors"] += 1
+                if stats["write_errors"] <= 20:
+                    print(f"[ingest] row {story_id} write error: "
+                          f"{type(exc).__name__}: {exc}", flush=True)
+                self._seen_ids.add(story_id)
+                continue
             self._seen_ids.add(story_id)
             stats["processed"] += 1
             if is_canonical:
@@ -586,6 +620,9 @@ class FullCorpusIngester:
             "rows_done": self.rows_done,
             "processed": stats["processed"],
             "errors": stats["errors"],
+            "write_errors": stats["write_errors"],
+            "dedup_errors": stats["dedup_errors"],
+            "reprocessed_skips": stats["reprocessed_skips"],
             "canonical": canonical_stats["canonical"],
             "duplicates": canonical_stats["duplicates"],
             "tiers": {k: v for k, v in canonical_stats.items() if k.startswith("Tier")},

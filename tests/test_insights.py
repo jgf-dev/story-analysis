@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from insights import analysis, corpus_prep, ner
 from insights.corpus_prep import (
     BandedDeduper, FullCorpusIngester, minhash_signature, signature_similarity,
-    normalized_hash, process_row,
+    normalized_hash, process_row, process_rows, process_batch,
 )
 
 
@@ -133,6 +133,26 @@ def test_resume_is_idempotent(tmp_path, catalog):
     assert after == before
 
 
+def test_resume_midfile_multiline_rows(tmp_path):
+    # Regression: resume must seek to a record boundary without skipping the
+    # first line of the next (possibly multi-line) CSV record.
+    rows = [(f"Story {i}", "First paragraph line.\n\nSecond paragraph here.\n\nThird.",
+             "college", "2000-01-01") for i in range(1, 7)]
+    csv_path = tmp_path / "multi.csv"
+    _write_csv(csv_path, rows)
+    db = tmp_path / "multi.sqlite"
+    FullCorpusIngester(str(db), str(db) + ".state").ingest(str(csv_path), workers=1, limit=2)
+    assert sqlite3.connect(db).execute("SELECT count(*) FROM stories").fetchone()[0] == 2
+
+    FullCorpusIngester(str(db), str(db) + ".state").ingest(str(csv_path), workers=1)
+    c = sqlite3.connect(db)
+    ids = [r[0] for r in c.execute("SELECT id FROM stories ORDER BY id")]
+    titles = [r[0] for r in c.execute("SELECT title FROM stories ORDER BY id")]
+    c.close()
+    assert ids == [1, 2, 3, 4, 5, 6], ids
+    assert titles == [f"Story {i}" for i in range(1, 7)], titles
+
+
 def test_process_row_extracts_metadata():
     row = {"id": "1", "content": BASE * 2, "title": "Bar Story", "author_name": "",
            "category": "encounters", "orientation": "gay", "word_count": "100",
@@ -144,6 +164,26 @@ def test_process_row_extracts_metadata():
     assert s["metrics"]["word_count"] > 0
     assert s["quality"]["tier"]
     assert isinstance(s["taxonomy"]["tropes"], list)
+
+
+def test_process_batch_splits_across_workers_and_preserves_order():
+    from multiprocessing import get_context
+    rows = [{"id": str(i), "content": (BASE + " " + DISTINCT) * (i % 3 + 1),
+             "title": f"T{i}", "author_name": "", "category": "college",
+             "orientation": "gay", "word_count": "100", "publication_date": "2000-01-01",
+             "path": "gay/college/x", "url": "u", "story_slug": f"t{i}", "char_count": "500"}
+            for i in range(7)]
+    seq = process_rows(rows)
+    ctx = get_context("fork")
+    pool = ctx.Pool(processes=2)
+    try:
+        par = process_batch(pool, rows)
+    finally:
+        pool.close()
+        pool.join()
+    assert [s["id"] for s in par] == [s["id"] for s in seq]
+    assert [s["title"] for s in par] == [s["title"] for s in seq]
+    assert [s["quality"]["tier"] for s in par] == [s["quality"]["tier"] for s in seq]
 
 
 # ---------------------------------------------------------------------------

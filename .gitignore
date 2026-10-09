@@ -13,6 +13,7 @@ data/raw/
 *.db-wal
 *.db-shm
 data/*.log
+data/*.log.*
 data/*.done
 insights_output/
 *.sqlite-wal
