@@ -213,6 +213,15 @@ def test_entities_extraction():
     assert "jock / athlete" in ents["character"]
 
 
+def test_strip_boilerplate_removes_chrome_keeps_prose():
+    from insights.semantic import strip_boilerplate
+    raw = ("From e0011@telly.on.ca\nCopyright 2004. All rights reserved.\n"
+           "Please donate to nifty.org.\n\nHe walked into the bar and saw the jock.")
+    out = strip_boilerplate(raw)
+    assert "nifty.org" not in out and "Copyright" not in out and "@" not in out
+    assert "walked into the bar" in out
+
+
 # ---------------------------------------------------------------------------
 # UI smoke
 # ---------------------------------------------------------------------------

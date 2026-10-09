@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
@@ -46,8 +47,36 @@ def load_scope_rows(db_path: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
+# Site chrome / header lines that contaminate the archive text (email headers,
+# nifty.org donate prompts, copyright notices, repost disclaimers). Removed
+# before embedding so LSA clusters reflect storycraft, not boilerplate.
+_BOILER_STRONG = re.compile(
+    r"(nifty|please\s+donate|donate\s+(to|at|here)|all rights reserved|copyright|"
+    r"\(c\)\s?\d|©|legal notice|reproduc\w*\s+(story|this|without|permission)|"
+    r"this (work|story) is (a work of )?fiction|must be (18|eighteen)|not be (posted|sold)|"
+    r"^\s*from\s+\S+@|https?://|www\.)", re.I)
+_BOILER_WEAK = re.compile(
+    r"(^\s*note:|dedicated to|sustain|distribut\w*|reprodu\w*|archive[sd]?\b|"
+    r"e-?mail|disclaim\w*)", re.I)
+
+
+def strip_boilerplate(text: str) -> str:
+    """Drop metadata/chrome lines so embeddings cluster on narrative prose."""
+    kept: List[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if _BOILER_STRONG.search(s):
+            continue
+        if len(s) < 200 and _BOILER_WEAK.search(s):
+            continue
+        kept.append(s)
+    return " ".join(kept)
+
+
 def fit_embeddings(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    texts = [f"{r['title']} {r['preview'][:EMBED_TEXT_CHARS]}" for r in rows]
+    texts = [f"{r['title']} {strip_boilerplate(r['preview'])[:EMBED_TEXT_CHARS]}" for r in rows]
     vectorizer = TfidfVectorizer(max_features=60_000, min_df=3, max_df=0.5,
                                  sublinear_tf=True, stop_words="english",
                                  ngram_range=(1, 2), dtype=np.float32)
