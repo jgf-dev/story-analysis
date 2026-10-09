@@ -205,11 +205,11 @@ def process_row(row: Dict[str, Any]) -> Dict[str, Any]:
     if row.get("category"):
         tags.append(row["category"])
 
-    clean = _PROFILER.clean_text(content)
+    clean = _PROFILER.clean_text(content, header_scan_chars=3000)
     safety = _PROFILER.audit_safety(clean, tags)
-    metrics = _PROFILER.calculate_text_metrics(clean)
+    metrics = _PROFILER.calculate_text_metrics(clean, density_scan_chars=15000)
     quality = _SCORER.evaluate(clean, metrics)
-    taxonomy = _TAGGER.tag_story(clean[:20000], title, tags, metrics)
+    taxonomy = _TAGGER.tag_story(clean[:8000], title, tags, metrics)
     tts_meta = _TTS.generate_tts_metadata(
         story_text=clean,
         quality_score=quality.total_score,

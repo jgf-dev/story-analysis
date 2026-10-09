@@ -53,8 +53,14 @@ class StoryProfiler:
     """Profiles raw story text, cleans noise/headers, and evaluates hygiene & safety."""
 
     @staticmethod
-    def clean_text(raw_text: str) -> str:
-        """Strip HTML, Usenet headers, ASCII dividers, and normalize unicode."""
+    def clean_text(raw_text: str, header_scan_chars: int = None) -> str:
+        """Strip HTML, Usenet headers, ASCII dividers, and normalize unicode.
+
+        header_scan_chars: when set, the Usenet/author-note header patterns are
+        only applied to the first N characters (headers live at the top of a
+        post). Keeps full-corpus streaming fast without changing results for
+        well-formed posts.
+        """
         if not raw_text:
             return ""
 
@@ -70,8 +76,14 @@ class StoryProfiler:
         text = re.sub(r"<[^>]+>", "", text)
 
         # 4. Remove known header, author-note, and divider patterns
-        for pattern in HEADER_PATTERNS:
-            text = pattern.sub("", text)
+        if header_scan_chars and len(text) > header_scan_chars:
+            head, tail = text[:header_scan_chars], text[header_scan_chars:]
+            for pattern in HEADER_PATTERNS:
+                head = pattern.sub("", head)
+            text = head + tail
+        else:
+            for pattern in HEADER_PATTERNS:
+                text = pattern.sub("", text)
 
         # 5. Fix common OCR / encoding mojibake glitches
         text = text.replace("â€™", "'").replace("â€œ", '"').replace("â€", '"').replace("â€”", "—")
@@ -165,8 +177,14 @@ class StoryProfiler:
         return title, author
 
     @classmethod
-    def calculate_text_metrics(cls, text: str) -> Dict[str, Any]:
-        """Compute statistical and linguistic metrics for the story."""
+    def calculate_text_metrics(cls, text: str, density_scan_chars: int = None) -> Dict[str, Any]:
+        """Compute statistical and linguistic metrics for the story.
+
+        density_scan_chars: when set, expensive density metrics (dialogue,
+        TTR, sensory, explicit) are computed on the first N characters while
+        word/char/paragraph/sentence counts stay computed on the full text.
+        Density ratios are length-stable, so this keeps streaming fast.
+        """
         if not text.strip():
             return {
                 "word_count": 0,
@@ -196,25 +214,31 @@ class StoryProfiler:
 
         avg_sentence_len = round(word_count / sentence_count, 1)
 
+        if density_scan_chars and len(text) > density_scan_chars:
+            density_text = text[:density_scan_chars]
+        else:
+            density_text = text
+
         # Dialogue extraction: words enclosed in standard quotes
-        dialogue_matches = re.findall(r'["“][^"”]+["”]', text)
+        dialogue_matches = re.findall(r'["“][^"”]+["”]', density_text)
         dialogue_words = 0
         for d in dialogue_matches:
             dialogue_words += len(re.findall(r"\b\w+\b", d))
         dialogue_ratio = round(dialogue_words / max(word_count, 1), 3)
 
         # Vocabulary richness: Type-Token Ratio
-        unique_words = set(words)
-        ttr = round(len(unique_words) / max(word_count, 1), 3)
+        density_words = re.findall(r"\b\w+(?:'\w+)?\b", density_text.lower())
+        unique_words = set(density_words)
+        ttr = round(len(unique_words) / max(len(density_words), 1), 3)
 
         # Sensory word density
         all_sensory = set().union(*SENSORY_WORDS.values())
-        sensory_count = sum(1 for w in words if w in all_sensory)
-        sensory_density = round(sensory_count / max(word_count, 1), 4)
+        sensory_count = sum(1 for w in density_words if w in all_sensory)
+        sensory_density = round(sensory_count / max(len(density_words), 1), 4)
 
         # Explicit / intimacy density
-        explicit_count = sum(1 for w in words if w in EXPLICIT_TERMS)
-        explicit_density = round(explicit_count / max(word_count, 1), 4)
+        explicit_count = sum(1 for w in density_words if w in EXPLICIT_TERMS)
+        explicit_density = round(explicit_count / max(len(density_words), 1), 4)
 
         # Audio duration estimation (150 words per minute is standard for narrative/erotic audio)
         estimated_audio_min = round(word_count / 150.0, 1)
