@@ -119,7 +119,7 @@ class FailureReason:
 
 def create_client():
     """Create a TransformClient instance with specified timeout and retry settings."""
-    return TransformClient(timeout_seconds=TIMEOUT_SECONDS, max_attempts=MAX_ATTEMPTS, max_wait_seconds=MAX_WAIT_SECONDS)
+    return TransformClient(timeout_seconds=TIMEOUT_SECONDS, retries=MAX_ATTEMPTS)
 
 
 def parse_document(file_path: str):
