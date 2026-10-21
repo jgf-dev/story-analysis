@@ -10,7 +10,7 @@ from pathlib import Path
 from pipeline.embeddings import VectorIndex
 from pipeline.orchestrator import PipelineOrchestrator
 from pipeline.profiler import StoryProfiler
-from pipeline.schemas import RawStory
+from pipeline.schemas import ProcessedStory, RawStory
 from pipeline.tts_prioritizer import TTSPrioritizer
 
 csv.field_size_limit(2**31 - 1)  # Increase CSV field size limit to handle large text fields
@@ -89,7 +89,30 @@ def load_raw_stories(input_path: str, limit: int | None = None) -> list[RawStory
     return stories
 
 
-def main():
+def export_tts_chunks(output_dir: Path, tts_candidates: list[ProcessedStory]) -> None:
+    """Export pre-segmented SSML audio chunks for top TTS candidates, pruning stale chunks."""
+    chunks_dir = output_dir / "tts_chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    # Remove chunks from previous runs first. The directory is keyed by
+    # story id and never pruned, so without this a run over a different
+    # input leaves stale files behind and the directory no longer matches
+    # the candidate queue it is supposed to represent.
+    written = {f"{cand.id}_chunks.json" for cand in tts_candidates}
+    removed = 0
+    for existing in chunks_dir.glob("*_chunks.json"):
+        if existing.name not in written:
+            existing.unlink()
+            removed += 1
+    if removed:
+        print(f"Removed {removed} stale chunk file(s) from a previous run.")
+    for cand in tts_candidates:
+        chunks = TTSPrioritizer.chunk_story_for_tts(cand.clean_text)
+        chunk_file = chunks_dir / f"{cand.id}_chunks.json"
+        with open(chunk_file, "w", encoding="utf-8") as f:
+            json.dump(chunks, f, indent=2)
+
+
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="300K Gay Male Erotic Audio Story Dataset — Audit & Ingestion Pipeline")
     parser.add_argument("--input", "-i", default="samples/sample_stories.json", help="Path to input dataset file (JSON or JSONL)")
     parser.add_argument("--output-dir", "-o", default="data/output", help="Directory to store processed catalog and audit reports")
@@ -101,7 +124,7 @@ def main():
     parser.add_argument("--build-vector-index", action="store_true", default=True, help="Build TF-IDF semantic vector index for fast search and recommendation")
     parser.add_argument("--no-vector-index", dest="build_vector_index", action="store_false", help="Skip vector index construction")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -145,26 +168,8 @@ def main():
         vector_index.save(str(vector_index_path))
         print(f"Vector index built with {len(vector_index.items)} items and {len(vector_index.vectorizer.vocabulary)} vocabulary features.")
 
-    if args.export_tts_chunks and tts_candidates:
-        chunks_dir = output_dir / "tts_chunks"
-        chunks_dir.mkdir(parents=True, exist_ok=True)
-        # Remove chunks from previous runs first. The directory is keyed by
-        # story id and never pruned, so without this a run over a different
-        # input leaves stale files behind and the directory no longer matches
-        # the candidate queue it is supposed to represent.
-        written = {f"{cand.id}_chunks.json" for cand in tts_candidates}
-        removed = 0
-        for existing in chunks_dir.glob("*_chunks.json"):
-            if existing.name not in written:
-                existing.unlink()
-                removed += 1
-        if removed:
-            print(f"Removed {removed} stale chunk file(s) from a previous run.")
-        for cand in tts_candidates:
-            chunks = TTSPrioritizer.chunk_story_for_tts(cand.clean_text)
-            chunk_file = chunks_dir / f"{cand.id}_chunks.json"
-            with open(chunk_file, "w", encoding="utf-8") as f:
-                json.dump(chunks, f, indent=2)
+    if args.export_tts_chunks:
+        export_tts_chunks(output_dir, tts_candidates)
 
     # Print summary table
     print("\n--- AUDIT SUMMARY REPORT ---")

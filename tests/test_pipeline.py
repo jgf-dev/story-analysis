@@ -4,7 +4,6 @@ import unittest
 import json
 import contextlib
 import io
-import sys
 from pathlib import Path
 
 from pipeline.schemas import (
@@ -199,15 +198,9 @@ class TestTTSPrioritizer(unittest.TestCase):
             (chunks / "raw_story_005_safety_violation_chunks.json").write_text("[]")
 
             buf = io.StringIO()
-            # invoke via argv so argparse defaults apply
-            argv = sys.argv
-            sys.argv = ["cli", "--input", "samples/sample_stories.json",
-                        "--output-dir", str(out), "--export-tts-chunks"]
-            try:
-                with contextlib.redirect_stdout(buf):
-                    cli_main()
-            finally:
-                sys.argv = argv
+            with contextlib.redirect_stdout(buf):
+                cli_main(["--input", "samples/sample_stories.json",
+                          "--output-dir", str(out), "--export-tts-chunks"])
 
             remaining = {p.name for p in chunks.glob("*_chunks.json")}
             self.assertNotIn("9999_stale_chunks.json", remaining)
@@ -216,6 +209,23 @@ class TestTTSPrioritizer(unittest.TestCase):
             self.assertTrue(remaining)
             for name in remaining:
                 self.assertNotIn("safety_violation", name)
+
+    def test_export_prunes_when_no_candidates(self):
+        """Even if no candidates qualify for TTS, stale chunks must still be pruned."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            chunks = out / "tts_chunks"
+            chunks.mkdir(parents=True)
+            (chunks / "9999_stale_chunks.json").write_text("[]")
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli_main(["--input", "samples/sample_stories.json",
+                          "--output-dir", str(out), "--export-tts-chunks",
+                          "--min-tts-score", "999.0"])
+
+            remaining = list(chunks.glob("*_chunks.json"))
+            self.assertEqual(remaining, [])
 
 
 class TestVectorIndex(unittest.TestCase):
