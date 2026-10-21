@@ -2,6 +2,9 @@
 
 import unittest
 import json
+import contextlib
+import io
+import sys
 from pathlib import Path
 
 from pipeline.schemas import (
@@ -24,7 +27,7 @@ from pipeline.tagging import StoryTaxonomyTagger
 from pipeline.tts_prioritizer import TTSPrioritizer
 from pipeline.orchestrator import PipelineOrchestrator
 from pipeline.embeddings import VectorIndex, PurePythonVectorizer
-from pipeline.cli import load_raw_stories
+from pipeline.cli import load_raw_stories, main as cli_main
 import tempfile
 import csv
 
@@ -167,7 +170,7 @@ class TestTTSPrioritizer(unittest.TestCase):
         self.assertTrue("<p>" in chunks[0]["ssml_payload"])
 
     def test_filter_and_rank(self):
-        stories_file = Path("data/samples/sample_stories.json")
+        stories_file = Path("samples/sample_stories.json")
         with open(stories_file, "r") as f:
             raw_data = json.load(f)
         raw_stories = [RawStory(**d) for d in raw_data]
@@ -182,6 +185,37 @@ class TestTTSPrioritizer(unittest.TestCase):
             self.assertTrue(r.is_canonical)
             self.assertNotEqual(r.id, "raw_story_005_safety_violation")
             self.assertNotEqual(r.id, "raw_story_003_near_duplicate")
+
+    def test_export_prunes_stale_chunks(self):
+        """A run over a different input must not leave the previous run's
+        chunks behind: the directory is keyed by story id and never pruned, so
+        stale files would otherwise be indistinguishable from current output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            chunks = out / "tts_chunks"
+            chunks.mkdir(parents=True)
+            # a chunk from a previous run, including one for a safety failure
+            (chunks / "9999_stale_chunks.json").write_text("[]")
+            (chunks / "raw_story_005_safety_violation_chunks.json").write_text("[]")
+
+            buf = io.StringIO()
+            # invoke via argv so argparse defaults apply
+            argv = sys.argv
+            sys.argv = ["cli", "--input", "samples/sample_stories.json",
+                        "--output-dir", str(out), "--export-tts-chunks"]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    cli_main()
+            finally:
+                sys.argv = argv
+
+            remaining = {p.name for p in chunks.glob("*_chunks.json")}
+            self.assertNotIn("9999_stale_chunks.json", remaining)
+            self.assertNotIn("raw_story_005_safety_violation_chunks.json", remaining)
+            # every remaining chunk corresponds to a PASS candidate
+            self.assertTrue(remaining)
+            for name in remaining:
+                self.assertNotIn("safety_violation", name)
 
 
 class TestVectorIndex(unittest.TestCase):

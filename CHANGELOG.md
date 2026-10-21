@@ -72,6 +72,18 @@ Entries are grouped by the change types defined in Keep a Changelog:
 - `.gitignore` now covers `data/logs/` and `.pytest_cache/`. The new
   `scripts/ingest.sh` writes its run logs to `data/logs/`, which was not
   ignored and would have been committed.
+- **Stale TTS chunk files accumulated across runs.** `pipeline/cli.py` wrote
+  `tts_chunks/<id>_chunks.json` with `mkdir(exist_ok=True)` and never pruned, so
+  a run over a different input left the previous run's chunks in place. The
+  directory then no longer matched the candidate queue it represents — a
+  directory of 1,414 files sat alongside a 1,302-entry queue, and the surplus
+  was indistinguishable from current output. The export now deletes any
+  `*_chunks.json` not belonging to the current candidate set before writing.
+- **Broken fixture path after `data/samples/` moved to `samples/`.** The move
+  left three stale references, one of which failed
+  `tests/test_pipeline.py::TestTTSPrioritizer::test_filter_and_rank` with
+  `FileNotFoundError`. Updated `tests/test_pipeline.py`, the `--input` default
+  in `pipeline/cli.py`, and the example in `docs/INGESTION_SPECIFICATION.md`.
 
 ### Security
 

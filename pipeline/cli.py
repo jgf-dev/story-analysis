@@ -91,7 +91,7 @@ def load_raw_stories(input_path: str, limit: int | None = None) -> list[RawStory
 
 def main():
     parser = argparse.ArgumentParser(description="300K Gay Male Erotic Audio Story Dataset — Audit & Ingestion Pipeline")
-    parser.add_argument("--input", "-i", default="data/samples/sample_stories.json", help="Path to input dataset file (JSON or JSONL)")
+    parser.add_argument("--input", "-i", default="samples/sample_stories.json", help="Path to input dataset file (JSON or JSONL)")
     parser.add_argument("--output-dir", "-o", default="data/output", help="Directory to store processed catalog and audit reports")
     parser.add_argument("--near-dup-threshold", type=float, default=0.80, help="MinHash / Jaccard similarity threshold for near-duplicate clustering (default 0.80)")
     parser.add_argument("--min-tts-score", type=float, default=75.0, help="Minimum quality score threshold for TTS candidate queue")
@@ -148,6 +148,18 @@ def main():
     if args.export_tts_chunks and tts_candidates:
         chunks_dir = output_dir / "tts_chunks"
         chunks_dir.mkdir(parents=True, exist_ok=True)
+        # Remove chunks from previous runs first. The directory is keyed by
+        # story id and never pruned, so without this a run over a different
+        # input leaves stale files behind and the directory no longer matches
+        # the candidate queue it is supposed to represent.
+        written = {f"{cand.id}_chunks.json" for cand in tts_candidates}
+        removed = 0
+        for existing in chunks_dir.glob("*_chunks.json"):
+            if existing.name not in written:
+                existing.unlink()
+                removed += 1
+        if removed:
+            print(f"Removed {removed} stale chunk file(s) from a previous run.")
         for cand in tts_candidates:
             chunks = TTSPrioritizer.chunk_story_for_tts(cand.clean_text)
             chunk_file = chunks_dir / f"{cand.id}_chunks.json"
