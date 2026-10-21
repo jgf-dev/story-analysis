@@ -52,6 +52,11 @@ Entries are grouped by the change types defined in Keep a Changelog:
   never mixed into the next run's.
 - Documentation: `docs/INSIGHT_PLATFORM.md` gained *Failure handling and exit
   codes*, *Running it in a pipeline*, and *Regex configuration* sections.
+- The corpus-audit findings in `COMMENTS.md` now carry their Linear issue
+  references. Open findings are tracked in the *Nifty Corpus data analysis and
+  NLP* project as STO-1245 (quality rubric), STO-1247 (safety false positives),
+  STO-1248 (dedup metadata), STO-1249 (dialogue regex), STO-1250 (parse module
+  and corpus-scale coverage) and STO-1251 (repeat artifacts).
 
 ### Fixed
 
