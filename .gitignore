@@ -20,3 +20,5 @@ insights_output/
 *.sqlite-shm
 *.db-journal
 data/catalog.sqlite*
+data/output/
+data/stories_clean.csv

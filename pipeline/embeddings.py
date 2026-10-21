@@ -16,7 +16,7 @@ class PurePythonVectorizer:
     Produces L2-normalized vector representations for cosine similarity.
     """
 
-    def __init__(self, max_features: int = 512, min_df: int = 1):
+    def __init__(self, max_features: int = 1024, min_df: int = 1):
         self.max_features = max_features
         self.min_df = min_df
         self.vocabulary: Dict[str, int] = {}
