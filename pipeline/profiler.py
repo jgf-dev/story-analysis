@@ -85,7 +85,49 @@ EXPLICIT_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-print(EXPLICIT_PATTERN.groups)
+# Every pattern that participates in cleaning or safety screening. They live at
+# module scope on purpose: a malformed regex then raises ImportError here, at
+# import time. Compiled inside a function instead, the same regex error would be
+# raised per row, absorbed by ``process_rows``, and the ingest would finish
+# reporting "0 rows processed" with a success exit code.
+REGEX_PATTERNS: dict[str, list[re.Pattern[str]]] = {
+    "HEADER_PATTERNS": HEADER_PATTERNS,
+    "UNDERAGE_INDICATORS": UNDERAGE_INDICATORS,
+    "EXTREME_VIOLENCE_INDICATORS": EXTREME_VIOLENCE_INDICATORS,
+    "EXPLICIT_PATTERN": [EXPLICIT_PATTERN],
+}
+
+
+def validate_patterns() -> None:
+    """Raise RuntimeError if any registered pattern is unusable.
+
+    Called at import. A compile error already surfaces here because the patterns
+    are module scope; this additionally catches a pattern that compiles but
+    cannot be executed, and an empty rule list (which would silently disable
+    a whole safety gate).
+    """
+    problems: list[str] = []
+    for name, patterns in REGEX_PATTERNS.items():
+        if not patterns:
+            problems.append(f"{name} is empty; this rule list would match nothing")
+            continue
+        for index, pattern in enumerate(patterns):
+            if not isinstance(pattern, re.Pattern):
+                problems.append(
+                    f"{name}[{index}] is {type(pattern).__name__}, not a compiled pattern")
+                continue
+            try:
+                pattern.search("")
+                pattern.search("the quick brown fox jumped over 3 lazy dogs")
+            except re.error as exc:
+                problems.append(f"{name}[{index}]: {exc}")
+    if problems:
+        raise RuntimeError(
+            "invalid regex configuration in pipeline.profiler:\n  "
+            + "\n  ".join(problems))
+
+
+validate_patterns()
 
 
 class StoryProfiler:

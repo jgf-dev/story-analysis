@@ -22,3 +22,5 @@ insights_output/
 data/catalog.sqlite*
 data/output/
 data/stories_clean.csv
+data/logs/
+.pytest_cache/

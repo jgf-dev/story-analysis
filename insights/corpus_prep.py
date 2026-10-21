@@ -24,12 +24,13 @@ import csv
 import hashlib
 import io
 import json
-import os
+import re
 import sqlite3
 import sys
 import time
 import zlib
-from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter
+from typing import Any
 
 import numpy as np
 
@@ -37,24 +38,26 @@ csv.field_size_limit(64 * 1024 * 1024)  # story fields exceed the 128KB default
 
 from pipeline.profiler import StoryProfiler
 from pipeline.quality import StoryQualityScorer
+from pipeline.schemas import QualityTier, SafetyVerdict
 from pipeline.tagging import StoryTaxonomyTagger
 from pipeline.tts_prioritizer import TTSPrioritizer
-from pipeline.schemas import SafetyVerdict, QualityTier, HeatLevel
 
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
 
-NUM_PERMUTATIONS = 128          # MinHash permutations
-BAND_ROWS = 4                   # rows per LSH band
+NUM_PERMUTATIONS = 128  # MinHash permutations
+BAND_ROWS = 4  # rows per LSH band
 BANDS = NUM_PERMUTATIONS // BAND_ROWS
-MINHASH_SOURCE_CHARS = 30_000   # signature source: first N cleaned chars
-SHINGLE_K = 5                   # word k-shingles
-NEAR_DUP_THRESHOLD = 0.80       # signature similarity for near-duplicate
-BATCH_ROWS = 300                # rows per work unit
-COMMIT_ROWS = 5_000             # SQLite commit interval
-PREVIEW_CHARS = 8_000           # stored preview length for all stories
+MINHASH_SOURCE_CHARS = 30_000  # signature source: first N cleaned chars
+SHINGLE_K = 5  # word k-shingles
+NEAR_DUP_THRESHOLD = 0.80  # signature similarity for near-duplicate
+BATCH_ROWS = 300  # rows per work unit
+COMMIT_ROWS = 600  # SQLite commit interval
+PREVIEW_CHARS = 8_000  # stored preview length for all stories
 KEEP_FULL_TEXT_MAX_CHARS = 400_000  # cap on stored full text (defensive)
+MAX_ERROR_SIGNATURES = 100  # distinct error signatures kept in the report
+FAILED_ID_SAMPLE = 100  # unprocessed row ids listed in the final stats
 
 # 32-bit Mersenne prime coefficients for MinHash (fixed for reproducibility).
 # Coefficients and shingle hashes are kept <= 2^31 so a*b fits in uint64
@@ -64,8 +67,8 @@ _PRIME31 = (1 << 31) - 1
 
 def _coeff(seed: int) -> int:
     x = (seed * 6364136223846793005 + 1442695040888963407) & ((1 << 64) - 1)
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9 & ((1 << 64) - 1)
-    x = (x ^ (x >> 27)) * 0x94d049bb133111eb & ((1 << 64) - 1)
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9 & ((1 << 64) - 1)
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EB & ((1 << 64) - 1)
     x ^= x >> 31
     return (x % (_PRIME31 - 1)) + 1
 
@@ -76,9 +79,9 @@ _COEFF_B = np.array([_coeff(i * 2 + 2) for i in range(1, NUM_PERMUTATIONS + 1)],
 
 def _mix64(x: np.ndarray) -> np.ndarray:
     x = x ^ (x >> np.uint64(30))
-    x = x * np.uint64(0xbf58476d1ce4e5b9)
+    x = x * np.uint64(0xBF58476D1CE4E5B9)
     x = x ^ (x >> np.uint64(27))
-    x = x * np.uint64(0x94d049bb133111eb)
+    x = x * np.uint64(0x94D049BB133111EB)
     x = x ^ (x >> np.uint64(31))
     return x
 
@@ -87,7 +90,7 @@ def _mix64(x: np.ndarray) -> np.ndarray:
 # MinHash + banded LSH
 # ---------------------------------------------------------------------------
 
-_WORD_CACHE: Dict[str, int] = {}
+_WORD_CACHE: dict[str, int] = {}
 
 
 def _word_id(word: str) -> int:
@@ -106,14 +109,13 @@ def _shingle_hashes(text: str) -> np.ndarray:
         if not words:
             return np.zeros(0, dtype=np.uint64)
         joined = " ".join(words).encode("utf-8")
-        return np.array([int.from_bytes(hashlib.blake2b(joined, digest_size=8).digest(), "little")],
-                        dtype=np.uint64)
+        return np.array([int.from_bytes(hashlib.blake2b(joined, digest_size=8).digest(), "little")], dtype=np.uint64)
     # Hash each word once (cached), then combine positionally (rolling shingle).
     word_hashes = np.array([_word_id(w) for w in words], dtype=np.uint64)
     base = np.uint64(1_000_003)
     rolling = np.zeros(len(words) - SHINGLE_K + 1, dtype=np.uint64)
     for off in range(SHINGLE_K):
-        wh = word_hashes[off: off + len(rolling)]
+        wh = word_hashes[off : off + len(rolling)]
         rolling = rolling * base + wh
     return _mix64(rolling)
 
@@ -138,11 +140,11 @@ def signature_similarity(sig_a: np.ndarray, sig_b: np.ndarray) -> float:
     return float(np.mean(sig_a == sig_b))
 
 
-def band_keys(sig: np.ndarray) -> List[int]:
+def band_keys(sig: np.ndarray) -> list[int]:
     """Banded LSH keys: hash of each consecutive BAND_ROWS signature slots."""
     keys = []
     for b in range(BANDS):
-        chunk = sig[b * BAND_ROWS:(b + 1) * BAND_ROWS]
+        chunk = sig[b * BAND_ROWS : (b + 1) * BAND_ROWS]
         keys.append(int.from_bytes(chunk.tobytes(), "little") & ((1 << 62) - 1))
     return keys
 
@@ -152,9 +154,9 @@ class BandedDeduper:
 
     def __init__(self, near_dup_threshold: float = NEAR_DUP_THRESHOLD):
         self.threshold = near_dup_threshold
-        self.exact_map: Dict[str, int] = {}          # normalized sha256 -> story id
-        self.sigs: Dict[int, np.ndarray] = {}        # canonical id -> signature
-        self.buckets: List[Dict[int, List[int]]] = [{} for _ in range(BANDS)]
+        self.exact_map: dict[str, int] = {}  # normalized sha256 -> story id
+        self.sigs: dict[int, np.ndarray] = {}  # canonical id -> signature
+        self.buckets: list[dict[int, list[int]]] = [{} for _ in range(BANDS)]
 
     def add_exact(self, norm_hash: str, story_id: int) -> None:
         self.exact_map[norm_hash] = story_id
@@ -164,7 +166,7 @@ class BandedDeduper:
         for band, key in enumerate(band_keys(sig)):
             self.buckets[band].setdefault(key, []).append(story_id)
 
-    def find_duplicate(self, norm_hash: str, sig: np.ndarray) -> Optional[int]:
+    def find_duplicate(self, norm_hash: str, sig: np.ndarray) -> int | None:
         """Return canonical story id this row duplicates, else None."""
         if norm_hash in self.exact_map:
             return self.exact_map[norm_hash]
@@ -197,7 +199,7 @@ _TAGGER = StoryTaxonomyTagger()
 _TTS = TTSPrioritizer()
 
 
-def process_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def process_row(row: dict[str, Any]) -> dict[str, Any]:
     """Run the JGF-4 per-story pipeline on one CSV row (no dedup yet)."""
     content = row.get("content") or ""
     title = (row.get("title") or "").strip()
@@ -208,9 +210,7 @@ def process_row(row: Dict[str, Any]) -> Dict[str, Any]:
     if not author or author.lower() in ("unknown", "unknown / anonymous", "anonymous"):
         author = "Unknown / Anonymous"
 
-    header_title, header_author = StoryProfiler.extract_metadata_from_headers(
-        content[:4000], default_title=title, default_author=author
-    )
+    header_title, header_author = StoryProfiler.extract_metadata_from_headers(content[:4000], default_title=title, default_author=author)
     if header_title:
         title = header_title
     if header_author and author == "Unknown / Anonymous":
@@ -271,19 +271,37 @@ def process_row(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def process_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Worker entry: run the per-story pipeline on a batch of CSV rows."""
+def process_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Worker entry: run the per-story pipeline on a batch of CSV rows.
+
+    A failure here is recorded rather than raised so one malformed row cannot
+    abort a multi-hour run. The parent MUST treat the resulting ``__error__``
+    markers as a failed run (see ``main``): a systematically broken row turns
+    into "processed 0 rows, exit 0" if the parent ignores them.
+    """
     out = []
     for row in rows:
         try:
             out.append(process_row(row))
         except Exception as exc:  # surfaced by the writer for stats
-            out.append({"__error__": f"{type(exc).__name__}: {exc}",
-                        "id": row.get("id", "?")})
+            out.append({"__error__": f"{type(exc).__name__}: {exc}", "id": row.get("id", "?")})
     return out
 
 
-def process_batch(pool, raw_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+_ERROR_DIGITS = re.compile(r"\d+")
+
+
+def error_signature(message: str) -> str:
+    """Collapse an error message to a stable type signature.
+
+    Digits are replaced with ``#`` so that messages differing only by a row id
+    or character offset group together, making the distinct-cause count
+    meaningful.
+    """
+    return _ERROR_DIGITS.sub("#", message).strip()[:200]
+
+
+def process_batch(pool, raw_batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Process a batch, splitting it across workers for real parallelism.
 
     ``pool.map(func, (raw_batch,))`` submits the whole batch as a single task
@@ -297,9 +315,8 @@ def process_batch(pool, raw_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     if n_workers == 1 or len(raw_batch) <= 1:
         return pool.map(process_rows, (raw_batch,))[0]
     chunk_size = (len(raw_batch) + n_workers - 1) // n_workers
-    chunks = [raw_batch[i:i + chunk_size]
-              for i in range(0, len(raw_batch), chunk_size)]
-    out: List[Dict[str, Any]] = []
+    chunks = [raw_batch[i : i + chunk_size] for i in range(0, len(raw_batch), chunk_size)]
+    out: list[dict[str, Any]] = []
     for part in pool.map(process_rows, chunks):
         out.extend(part)
     return out
@@ -378,24 +395,51 @@ INSERT_SQL = """INSERT INTO stories (
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
 
 
-def story_row(story: Dict[str, Any], is_canonical: bool, dup_of: Optional[int],
-              sig: Optional[bytes], norm_hash: str) -> Tuple:
+def story_row(story: dict[str, Any], is_canonical: bool, dup_of: int | None, sig: bytes | None, norm_hash: str) -> tuple:
     m = story["metrics"]
     q = story["quality"]
     t = story["taxonomy"]
     text = story["clean_text"]
     return (
-        story["id"], story["title"], story["author"], story["category"],
-        story["orientation"], story["path"], story["publication_date"], story["url"],
-        story["raw_word_count"], m["word_count"], m["char_count"], m["paragraph_count"],
-        m["avg_sentence_len"], m["dialogue_ratio"], m["ttr"], m["sensory_density"],
+        story["id"],
+        story["title"],
+        story["author"],
+        story["category"],
+        story["orientation"],
+        story["path"],
+        story["publication_date"],
+        story["url"],
+        story["raw_word_count"],
+        m["word_count"],
+        m["char_count"],
+        m["paragraph_count"],
+        m["avg_sentence_len"],
+        m["dialogue_ratio"],
+        m["ttr"],
+        m["sensory_density"],
         m["explicit_density"],
-        story["safety"], json.dumps(story["safety_terms"]),
-        q["formatting"], q["structural"], q["prose"], q["dialogue"], q["tts"],
-        q["total"], q["tier"], json.dumps(q["penalties"]),
-        json.dumps(t["tropes"]), json.dumps(t["archetypes"]), json.dumps(t["settings"]),
-        t["heat"], t["pov"], t["pacing"], t["duration_tier"],
-        story["tts_minutes"], norm_hash, sig, 1 if is_canonical else 0, dup_of,
+        story["safety"],
+        json.dumps(story["safety_terms"]),
+        q["formatting"],
+        q["structural"],
+        q["prose"],
+        q["dialogue"],
+        q["tts"],
+        q["total"],
+        q["tier"],
+        json.dumps(q["penalties"]),
+        json.dumps(t["tropes"]),
+        json.dumps(t["archetypes"]),
+        json.dumps(t["settings"]),
+        t["heat"],
+        t["pov"],
+        t["pacing"],
+        t["duration_tier"],
+        story["tts_minutes"],
+        norm_hash,
+        sig,
+        1 if is_canonical else 0,
+        dup_of,
         text[:PREVIEW_CHARS],
     )
 
@@ -404,9 +448,9 @@ def story_row(story: Dict[str, Any], is_canonical: bool, dup_of: Optional[int],
 # Main ingester
 # ---------------------------------------------------------------------------
 
+
 class FullCorpusIngester:
-    def __init__(self, db_path: str, state_path: str,
-                 near_dup_threshold: float = NEAR_DUP_THRESHOLD):
+    def __init__(self, db_path: str, state_path: str, near_dup_threshold: float = NEAR_DUP_THRESHOLD):
         self.db_path = db_path
         self.state_path = state_path
         self.conn = open_db(db_path)
@@ -417,6 +461,8 @@ class FullCorpusIngester:
         self._seen_ids: set = set()
         self._dedup_loaded = False
         self._pending_since_commit = 0
+        self._failed_id_sample: list[str] = []
+        self._error_types: Counter = Counter()
         self._t_start = time.time()
         self._load_state()
 
@@ -430,26 +476,44 @@ class FullCorpusIngester:
             self.last_offset = state["last_offset"]
 
     def _save_state(self) -> None:
-        state = {"rows_done": self.rows_done, "last_offset": self.last_offset}
-        self.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('ingest_state', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (json.dumps(state),))
+        state = {
+            "rows_done": self.rows_done,
+            "last_offset": self.last_offset,
+            # Written for post-mortem inspection of the meta table only: the
+            # counters are per-run and are not read back, so a failed run's
+            # report is never mixed into the next run's.
+            "error_types": dict(self._error_types.most_common(MAX_ERROR_SIGNATURES)),
+        }
+        self.conn.execute("INSERT INTO meta (key, value) VALUES ('ingest_state', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(state),))
         self.conn.commit()
+
+    def _record_error(self, kind: str, message: str, row_id: Any = None) -> None:
+        """Tally one failure under a bounded set of signatures.
+
+        The signature set is capped so that an error embedding a varying value
+        (a filename, a snippet) cannot grow the report or the stored state
+        without limit; overflow is folded into a single bucket.
+        """
+        signature = f"{kind}: {error_signature(message)}"
+        if signature in self._error_types or len(self._error_types) < MAX_ERROR_SIGNATURES:
+            self._error_types[signature] += 1
+        else:
+            self._error_types["(other distinct error types)"] += 1
+        if row_id is not None and len(self._failed_id_sample) < FAILED_ID_SAMPLE:
+            self._failed_id_sample.append(str(row_id))
 
     def _load_dedup_state(self) -> None:
         """Rebuild exact map + LSH buckets from committed canonical rows."""
         if self._dedup_loaded:
             return
-        for norm_hash, sid, sig_blob in self.conn.execute(
-                "SELECT exact_hash, id, sig FROM stories WHERE is_canonical=1 AND sig IS NOT NULL"):
+        for norm_hash, sid, sig_blob in self.conn.execute("SELECT exact_hash, id, sig FROM stories WHERE is_canonical=1 AND sig IS NOT NULL"):
             self.deduper.add_exact(norm_hash, sid)
             if sig_blob is not None:
                 self.deduper.register_canonical(sid, np.frombuffer(sig_blob, dtype=np.uint32))
         self._dedup_loaded = True
 
     # -- dedup --------------------------------------------------------------
-    def _decide(self, story: Dict[str, Any]) -> Tuple[bool, Optional[int], str]:
+    def _decide(self, story: dict[str, Any]) -> tuple[bool, int | None, str]:
         text = story["clean_text"]
         if not text.strip():
             return False, None, ""
@@ -463,29 +527,31 @@ class FullCorpusIngester:
         return False, dup_of, norm_hash
 
     # -- writer --------------------------------------------------------------
-    def _write(self, story: Dict[str, Any], is_canonical: bool, dup_of: Optional[int],
-               norm_hash: str) -> None:
+    def _write(self, story: dict[str, Any], is_canonical: bool, dup_of: int | None, norm_hash: str) -> None:
         text = story["clean_text"]
         sig = self.deduper.sigs.get(story["id"])
         sig_bytes = sig.tobytes() if sig is not None else None
         self.conn.execute(INSERT_SQL, story_row(story, is_canonical, dup_of, sig_bytes, norm_hash))
-        keep_full = (is_canonical
-                     and story["safety"] == SafetyVerdict.PASS.value
-                     and story["quality"]["tier"] in (QualityTier.TIER_1_MASTER.value,
-                                                      QualityTier.TIER_2_SECONDARY.value)
-                     and story["metrics"]["word_count"] >= 150)
+        keep_full = (
+            is_canonical
+            and story["safety"] == SafetyVerdict.PASS.value
+            and story["quality"]["tier"] in (QualityTier.TIER_1_MASTER.value, QualityTier.TIER_2_SECONDARY.value)
+            and story["metrics"]["word_count"] >= 150
+        )
         if keep_full and text:
             blob = zlib.compress(text[:KEEP_FULL_TEXT_MAX_CHARS].encode("utf-8"), level=1)
-            self.conn.execute("INSERT OR REPLACE INTO story_text (id, full_text) VALUES (?,?)",
-                              (story["id"], blob))
+            self.conn.execute("INSERT OR REPLACE INTO story_text (id, full_text) VALUES (?,?)", (story["id"], blob))
 
     # -- main loop -----------------------------------------------------------
-    def ingest(self, csv_path: str, limit: Optional[int] = None,
-               progress_every: int = 20000, workers: int = 2) -> Dict[str, Any]:
-        from collections import Counter
+    def ingest(self, csv_path: str, limit: int | None = None, progress_every: int = 20000, workers: int = 2) -> dict[str, Any]:
         from multiprocessing import get_context
+
         stats = Counter()
         canonical_stats = Counter()
+        # Per-run diagnostics: reset so a second ingest() on the same instance
+        # does not inherit the previous run's failure report.
+        self._error_types = Counter()
+        self._failed_id_sample = []
         self._load_dedup_state()
         self._load_seen_ids()
         fieldnames = self._fieldnames(csv_path)
@@ -503,9 +569,9 @@ class FullCorpusIngester:
                     f.seek(self.last_offset)
                 else:
                     f.readline()  # skip CSV header
-                buf: List[str] = []
+                buf: list[str] = []
                 quote_count = 0
-                batch: List[Dict[str, Any]] = []
+                batch: list[dict[str, Any]] = []
                 offset = self.last_offset
                 while True:
                     line = f.readline()
@@ -518,8 +584,7 @@ class FullCorpusIngester:
                         row = next(csv.reader(io.StringIO("".join(buf))))
                         buf = []
                         quote_count = 0
-                        batch.append({name: row[i] if i < len(row) else ""
-                                      for i, name in enumerate(fieldnames)})
+                        batch.append({name: row[i] if i < len(row) else "" for i, name in enumerate(fieldnames)})
                         self._read_rows += 1
                         offset = f.tell()
                         if limit and self._read_rows >= limit:
@@ -546,7 +611,7 @@ class FullCorpusIngester:
         self._save_state()
         return self._final_stats(stats, canonical_stats)
 
-    def _fieldnames(self, csv_path: str) -> List[str]:
+    def _fieldnames(self, csv_path: str) -> list[str]:
         with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
             return next(csv.reader(f))
 
@@ -558,14 +623,15 @@ class FullCorpusIngester:
             for (sid,) in self.conn.execute("SELECT id FROM stories"):
                 self._seen_ids.add(sid)
 
-    def _flush_batch(self, stories: List[Dict[str, Any]], offset: int, stats,
-                     canonical_stats) -> None:
+    def _flush_batch(self, stories: list[dict[str, Any]], offset: int, stats, canonical_stats) -> None:
+        batch_failed = 0
         for story in stories:
             if story.get("__error__"):
+                batch_failed += 1
                 stats["errors"] += 1
+                self._record_error("pipeline", story["__error__"], story.get("id"))
                 if stats["errors"] <= 20:
-                    print(f"[ingest] row {story.get('id')} error: {story['__error__']}",
-                          flush=True)
+                    print(f"[ingest] row {story.get('id')} error: {story['__error__']}", flush=True)
                 continue
             story_id = story["id"]
             if story_id in self._seen_ids:
@@ -573,19 +639,20 @@ class FullCorpusIngester:
                 continue
             try:
                 is_canonical, dup_of, norm_hash = self._decide(story)
-            except Exception:
+            except Exception as exc:
                 stats["dedup_errors"] += 1
-                is_canonical, dup_of, norm_hash = True, None, normalized_hash(
-                    _norm_text_for_hash(story["clean_text"]))
+                batch_failed += 1
+                self._record_error("dedup", f"{type(exc).__name__}: {exc}", story_id)
+                is_canonical, dup_of, norm_hash = True, None, normalized_hash(_norm_text_for_hash(story["clean_text"]))
             try:
                 self._write(story, is_canonical, dup_of, norm_hash)
             except Exception as exc:
                 # One malformed row must not abort a multi-hour full-corpus run.
                 stats["write_errors"] += 1
+                batch_failed += 1
+                self._record_error("write", f"{type(exc).__name__}: {exc}", story_id)
                 if stats["write_errors"] <= 20:
-                    print(f"[ingest] row {story_id} write error: "
-                          f"{type(exc).__name__}: {exc}", flush=True)
-                self._seen_ids.add(story_id)
+                    print(f"[ingest] row {story_id} write error: {type(exc).__name__}: {exc}", flush=True)
                 continue
             self._seen_ids.add(story_id)
             stats["processed"] += 1
@@ -598,7 +665,17 @@ class FullCorpusIngester:
             self._pending_since_commit += 1
         self._cur_offset = offset
         self.rows_done = self._read_rows
-        if self._pending_since_commit >= COMMIT_ROWS or offset >= 0:
+        if batch_failed:
+            # A row in this batch raised. Advancing the checkpoint past it
+            # would permanently skip it (last_offset is only ever seeked to,
+            # never replayed), so the whole batch is retried by the next run.
+            # Rows that did commit are in _seen_ids and are skipped cheaply.
+            stats["blocked_batches"] += 1
+            print(f"[ingest] checkpoint held at offset {self.last_offset}: {batch_failed} row(s) in this batch failed; they will be retried on the next run", flush=True)
+        elif not stats["blocked_batches"] and (self._pending_since_commit >= COMMIT_ROWS or offset >= 0):
+            # The blocked_batches guard is sticky for the whole run: once any
+            # batch has failed, a later successful batch must not advance the
+            # checkpoint past the failed rows either.
             self.conn.commit()
             self.last_offset = self._cur_offset
             self._save_state()
@@ -606,22 +683,28 @@ class FullCorpusIngester:
 
     def _log_progress(self, stats) -> None:
         elapsed = max(time.time() - self._t_start, 0.001)
-        print(f"[ingest] rows={self.rows_done} elapsed={elapsed/60:.1f}min "
-              f"rate={self.rows_done/elapsed:.0f}rows/s errors={stats['errors']}",
-              flush=True)
+        print(f"[ingest] rows={self.rows_done} elapsed={elapsed / 60:.1f}min rate={self.rows_done / elapsed:.0f}rows/s errors={stats['errors']}", flush=True)
         if self._pending_since_commit:
             self.conn.commit()
-            self.last_offset = self._cur_offset
+            if stats["blocked_batches"]:
+                print("[ingest] checkpoint held (a batch failed since the last commit); progress is not advanced past failed rows", flush=True)
+            else:
+                self.last_offset = self._cur_offset
             self._save_state()
             self._pending_since_commit = 0
 
-    def _final_stats(self, stats, canonical_stats) -> Dict[str, Any]:
+    def _final_stats(self, stats, canonical_stats) -> dict[str, Any]:
+        total_errors = stats["errors"] + stats["write_errors"] + stats["dedup_errors"]
         return {
             "rows_done": self.rows_done,
             "processed": stats["processed"],
             "errors": stats["errors"],
             "write_errors": stats["write_errors"],
             "dedup_errors": stats["dedup_errors"],
+            "total_errors": total_errors,
+            "blocked_batches": stats["blocked_batches"],
+            "error_types": dict(self._error_types.most_common()),
+            "unprocessed_ids": list(self._failed_id_sample),
             "reprocessed_skips": stats["reprocessed_skips"],
             "canonical": canonical_stats["canonical"],
             "duplicates": canonical_stats["duplicates"],
@@ -630,19 +713,38 @@ class FullCorpusIngester:
         }
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def _report_failures(result: dict[str, Any]) -> None:
+    """Print a loud, non-truncated summary of every distinct failure cause."""
+    total = result["total_errors"]
+    print(f"[ingest] FAILED: {total} row(s) could not be processed ({result['errors']} pipeline, {result['write_errors']} write, {result['dedup_errors']} dedup)", flush=True)
+    types = result.get("error_types") or {}
+    print(f"[ingest] distinct failure types: {len(types)}", flush=True)
+    for signature, count in types.items():
+        print(f"[ingest]   {count:>7,} x {signature}", flush=True)
+    if result.get("blocked_batches"):
+        print(f"[ingest] checkpoint was held for {result['blocked_batches']} batch(es); the failed rows were NOT skipped and will be retried on the next run", flush=True)
+    print("[ingest] treat this run as unsuccessful: no checkpoint was advanced past a failed row", flush=True)
+
+
+def main(argv: list[str] | None = None) -> None:
     import argparse
+
     p = argparse.ArgumentParser(description="Full-corpus streaming ingestion (JGF-12)")
     p.add_argument("--csv", required=True, help="Path to local stories_clean.csv")
     p.add_argument("--db", required=True, help="Output SQLite catalog path")
     p.add_argument("--limit", type=int, default=None, help="Stop after N rows (testing)")
     p.add_argument("--workers", type=int, default=2, help="Row-processing workers")
+    p.add_argument("--allow-errors", action="store_true", help="Exit 0 even when rows failed (default: fail the run)")
     args = p.parse_args(argv)
     ingester = FullCorpusIngester(args.db, args.db + ".state.json")
     result = ingester.ingest(args.csv, limit=args.limit, workers=args.workers)
     print(json.dumps(result, indent=2))
     with open(args.db + ".ingest_result.json", "w") as f:
         json.dump(result, f, indent=2)
+    if result["total_errors"]:
+        _report_failures(result)
+        if not args.allow_errors:
+            sys.exit(1)
 
 
 if __name__ == "__main__":

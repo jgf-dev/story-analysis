@@ -53,6 +53,53 @@ python -m insights.corpus_prep --csv data/raw/stories_clean.csv \
 Workers parallelise the per-story pipeline; the parent owns dedup state and the
 single-writer SQLite connection.
 
+### Failure handling and exit codes
+
+A per-row failure is recorded rather than raised, so one malformed record cannot
+abort a multi-hour run. The parent then treats any recorded failure as a failed
+run:
+
+- **Exit code** — `main` exits **1** when `errors + write_errors + dedup_errors`
+  is non-zero, after printing a summary. A run that processed nothing can no
+  longer exit 0. Pass `--allow-errors` to keep exit 0 for exploratory runs.
+- **Checkpoint** — `last_offset` is **not** advanced past a batch containing a
+  failure. `last_offset` is only ever seeked to, never replayed, so advancing it
+  would permanently skip the failed rows. Rows that did commit are in
+  `_seen_ids` and are skipped cheaply on the retry, so the cost of holding the
+  checkpoint is bounded.
+- **Reporting** — the first 20 failures print inline; the final summary always
+  prints the total and the count of **distinct** failure types (digits
+  normalised, so messages differing only by row id or offset group together),
+  capped at `MAX_ERROR_SIGNATURES` so a varying message cannot grow the report
+  without limit. `unprocessed_ids` lists up to `FAILED_ID_SAMPLE` affected rows.
+
+Because a failed run does not advance the checkpoint, **re-running after a fix
+reprocesses the failed rows** rather than skipping them.
+
+### Running it in a pipeline
+
+`python -m insights.corpus_prep ... | tee log` reports the exit status of `tee`,
+not of Python — a run that failed every row looks successful. Use the wrapper,
+which sets `pipefail` and additionally fails if a run exits 0 having processed
+no rows:
+
+```bash
+scripts/ingest.sh --csv data/stories_clean.csv --db data/catalog.sqlite --workers 4
+```
+
+If you invoke Python directly, use `set -o pipefail` or check
+`${PIPESTATUS[0]}`.
+
+### Regex configuration
+
+Every cleaning and safety pattern in `pipeline/profiler.py` is compiled at
+**module scope** and registered in `REGEX_PATTERNS`, which `validate_patterns()`
+checks at import. This is deliberate: a malformed pattern then raises at import
+time. Compiled inside a function instead, the same error is raised per row,
+absorbed by `process_rows`, and the run finishes reporting "0 rows processed"
+with a success exit code. `tests/test_insights.py` enforces this with an AST
+check that fails if any `re.compile()` appears inside a function.
+
 ## Analysis
 
 Aggregates over *canonical, safety-passing* stories: corpus shape, duplicate
