@@ -213,7 +213,7 @@ For each candidate in the top queue:
 ```bash
 # Ingest local sample dataset
 python3 -m pipeline.cli \
-  --input data/samples/sample_stories.json \
+  --input samples/sample_stories.json \
   --output-dir data/output \
   --export-tts-chunks
 
