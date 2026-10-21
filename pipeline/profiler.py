@@ -1,12 +1,13 @@
 """Text cleaning, normalization, profiling, and safety auditing for erotic stories."""
 
 from __future__ import annotations
-import re
-import html
-import unicodedata
-from typing import Dict, List, Tuple, Any
-from pipeline.schemas import RawStory, SafetyVerdict, SafetyAudit
 
+import html
+import re
+import unicodedata
+from typing import Any
+
+from pipeline.schemas import SafetyAudit, SafetyVerdict
 
 # Common Usenet, forum, and bulletin board header regexes
 HEADER_PATTERNS = [
@@ -14,7 +15,9 @@ HEADER_PATTERNS = [
     re.compile(r"^disclaimer:\s+.*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^(a/n|author'?s?\s*note):\s+.*$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^<!--[\s\S]*?-->", re.MULTILINE),
-    re.compile(r"^(please\s+review|leave\s+feedback|feedback\s+to|send\s+comments\s+to|all\s+characters\s+are\s+over\s+18|all\s+characters\s+depicted).*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(
+        r"^(please\s+review|leave\s+feedback|feedback\s+to|send\s+comments\s+to|all\s+characters\s+are\s+over\s+18|all\s+characters\s+depicted).*$", re.IGNORECASE | re.MULTILINE
+    ),
     re.compile(r"^\[(reposted|part\s+\d+|end\s+of\s+part|to\s+be\s+continued).*?\]$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^[~*=\-_#]{4,}\s*$", re.MULTILINE),  # ASCII divider lines
 ]
@@ -23,15 +26,15 @@ HEADER_PATTERNS = [
 UNDERAGE_INDICATORS = [
     re.compile(r"\b(?:1[0-5]|thirteen|fourteen|fifteen)\s*(?:-| )*(?:years?|yrs?)(?:-| )*old\b", re.IGNORECASE),
     re.compile(r"\bage[d]?\s*(?:1[0-5]|thirteen|fourteen|fifteen)\b", re.IGNORECASE),
-    re.compile(r"\b(?:under\s*18|underage|prepubescent|pedophil\w*|hebephil\w*|kindergarten|elementary\s+school|middle\s+school|junior\s+high)\b", re.IGNORECASE),
+    re.compile(r"\b(?:under\s*18|underage|prepubescent|pedo|pedophil\w*|hebephil\w*|kindergarten|elementary\s+school|middle\s+school|junior\s+high)\b", re.IGNORECASE),
     re.compile(r"\b(?:high\s+school\s+freshman|freshman\s+boy|junior\s+high\s+boy|middle\s+school\s+boy|fourteen|fifteen|thirteen)\b", re.IGNORECASE),
-    re.compile(r"\b(?:boyhood|child\s+(?:abuse|victim|exploitation|porn|sex))\b", re.IGNORECASE),
+    re.compile(r"\b(?:boyhood|(?:child|kid|toddler|infant|kiddy)\s+(?:abuse|rape|violence|victim|exploitation|porn|sex))\b", re.IGNORECASE),
 ]
 
-UNDERAGE_TAG_KEYWORDS = {"adult-youth", "youth", "underage", "teen", "prepubescent", "junior-high", "highschool", "high-school"}
+UNDERAGE_TAG_KEYWORDS = {"adult-youth", "youth", "underage", "prepubescent", "junior-high"}
 
 EXTREME_VIOLENCE_INDICATORS = [
-    re.compile(r"\b(necrophilia|snuff|bestiality|zoophilia)\b", re.IGNORECASE),
+    re.compile(r"\b(necrophilia|snuff|bestiality|zoophilia|abuse|suicide|kill\s+myself|rape|murder|assault|(?:stab|shoot)\s+(?:him|her|them))\b", re.IGNORECASE),
 ]
 
 # Sensory vocabulary lists for immersion and quality scoring
@@ -39,14 +42,92 @@ SENSORY_WORDS = {
     "tactile": {"touch", "skin", "warm", "warmth", "chill", "cold", "rough", "smooth", "shiver", "heat", "pulse", "brushed", "pressed", "grip", "clutched", "caress"},
     "auditory": {"whisper", "whispered", "groan", "groaned", "murmur", "murmured", "gasp", "gasped", "sigh", "sighed", "breath", "breathed", "raspy", "hummed", "echo"},
     "olfactory": {"scent", "smell", "cedarwood", "cologne", "musk", "rain", "coffee", "sweat", "sweet", "smoke"},
-    "visual": {"gaze", "stared", "shadow", "flickered", "amber", "dim", "flushed", "dark", "gleam", "shimmer", "eyes"}
+    "visual": {"gaze", "stared", "shadow", "flickered", "amber", "dim", "flushed", "dark", "gleam", "shimmer", "eyes"},
 }
 
-EXPLICIT_TERMS = {
-    "cock", "dick", "shaft", "chest", "thighs", "hips", "lips", "mouth", "tongue", "erection",
-    "hardness", "aching", "naked", "bare", "thrust", "hard", "arousal", "stroking", "groin",
-    "nipples", "ass", "nakedness"
+EXPLICIT_PATTERN = re.compile(
+    r"""\b(?:cock|dick|shaft|penis|boner|stiffy|erection|tenting|pubes|cake|
+    (?:arm)?pits|balls|nuts?|sack|chest|pecs|abs|nipples|thighs|hips|groin|
+    lips|mouth|tongue|butt|anus|bussy|(?:ass|man|boy|cum|fuck|slut|
+    glory[\s-]?)?hole|(?:boy|man)[\s-]?pussy|man[\s-]?cunt|
+    muscle(?:[\s-]?cunt)?|(?:power[\s-]?)?(?:top|bottom)|bottom[\s-]?out|
+    vers(?:atile)?|side|bator|daddy|boy|pig(?:gy)?|cum(?:pig|[\s-]?(?:slut|
+    dump|swap|soaked|load(?:ed|ing)?|shots?|shoot(?:ing)?|spurt(?:ed)?|
+    and[\s-]?(?:go|leave)))?|load(?:pig|s|[\s-]?and[\s-]?leave)?|
+    no[\s-]loads?[\s-]refused|slut|fuck(?:ed)?|face[\s-]?fuck|pound|wreck|
+    rail|thrust|(?:(?:double|triple)[\s-]?)?penetration|triple[\s-]?p|dp|
+    bre(?:ed(?:ing)?|d)|raw(?:dog)?|bare(?:back)?|bb|rim(?:ming)?|
+    eat[\s-]?ass|(?:lick|suck|jerk|frott|fist|slap)(?:ing)?|suck[\s-]?off|
+    (?:bulg|strok|edg|cruis)(?:e|ing)|goon(?:er|ing)?|blow[\s-]?jobs?|bj|
+    fellatio|(?:deep[\s-]?)?throat|jizz|bust|ejaculate|pre(?:[\s-]?cum)?|
+    spurt(?:ed|[\s-]?out)?|dogg(?:y|ie)|dog(?:gy)?[\s-]?style|spoon(?:ing|ed)?|
+    missionary(?:[\s-]?style)?|(?:reverse[\s-]?)?cowboy|bukkaked?|(?:three|four|
+    five|six|seven|eight|nine|ten)[\s-]?way|(?:three|four)some|orgy|(?:group|
+    public)[\s-]?sex|family[\s-]?(?:sex|incest)|gang[\s-]?bang|
+    ass(?:[\s-]?to[\s-]?mouth)?|atm|anal(?:[\s-]?(?:sex|play))?|
+    shag(?:g(?:ing|ed)|[\s-]?(?:me|them|him))?|spank(?:ing|
+    ed|[\s-]?(?:me|them|him))?|deprav(?:ed|ity)|perver(?:t(?:ed)?|s(?:e|ion))|
+    incest(?:uous)?|step[\s-]?(?:mom|dad|sister)|(?:step[\s-]?)?brother|
+    dilf|tw[iu]nk|(?:[3-9]|[12]\d)\s?(?:in(?:ches)?|cm|centimeters)|
+    lub(?:ed?|ricant|ricated)|humiliat(?:ed?|ing|ion)|degrad(?:ed?|ing|ation)|
+    used|serve|obey|order|snowball|milk|spit|piss(?:[\s-]?(?:play|soaked))?|
+    urine|watersports|ws|golden[\s-]?shower|wet(?:ness)?|moisture|sweat|
+    dripping|leaking|sloppy|flooded|messy|arousal|turned[\s-]?on|
+    hard(?:on|ness)?|aching|unprotected|naked(?:ness)?|nude|(?:un)?cut|
+    kinky?|fetish(?:y|is[mt]|istic)?|bdsm|bondage|discipline|
+    dom(?:in(?:ance|ation))?|sub(?:mission)?|switch|exhib(?:ition(?:is[mt])?)?|
+    show[\s-]?off|voyeur(?:ism|istic)?|public(?:ly|[\s-]?(?:play|display))|
+    puppy[\s-]?play|poppers|pnp|chemsex|jock(?:[\s-]?strap)?|gear|leather|
+    chastity|cage|locked|deni(?:al|ed)[\s-]?orgasm|(?:orgasm[\s-]?)?denial|
+    cuck(?:old(?:ing|ry)?)?|otter|bear|cub|masc4masc|size[\s-]?(?:queen|kink)|
+    teen(?:age(?:r|d(?:[\s-]?boy)?)?)?|69|sixty[\s-]?(?:nine|9)|bathhouse|sauna|
+    dark[\s-]?room|anon(?:ymous)?|dl|down[\s-]?low|discreet|nsa|trade|hung)\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Every pattern that participates in cleaning or safety screening. They live at
+# module scope on purpose: a malformed regex then raises ImportError here, at
+# import time. Compiled inside a function instead, the same regex error would be
+# raised per row, absorbed by ``process_rows``, and the ingest would finish
+# reporting "0 rows processed" with a success exit code.
+REGEX_PATTERNS: dict[str, list[re.Pattern[str]]] = {
+    "HEADER_PATTERNS": HEADER_PATTERNS,
+    "UNDERAGE_INDICATORS": UNDERAGE_INDICATORS,
+    "EXTREME_VIOLENCE_INDICATORS": EXTREME_VIOLENCE_INDICATORS,
+    "EXPLICIT_PATTERN": [EXPLICIT_PATTERN],
 }
+
+
+def validate_patterns() -> None:
+    """Raise RuntimeError if any registered pattern is unusable.
+
+    Called at import. A compile error already surfaces here because the patterns
+    are module scope; this additionally catches a pattern that compiles but
+    cannot be executed, and an empty rule list (which would silently disable
+    a whole safety gate).
+    """
+    problems: list[str] = []
+    for name, patterns in REGEX_PATTERNS.items():
+        if not patterns:
+            problems.append(f"{name} is empty; this rule list would match nothing")
+            continue
+        for index, pattern in enumerate(patterns):
+            if not isinstance(pattern, re.Pattern):
+                problems.append(
+                    f"{name}[{index}] is {type(pattern).__name__}, not a compiled pattern")
+                continue
+            try:
+                pattern.search("")
+                pattern.search("the quick brown fox jumped over 3 lazy dogs")
+            except re.error as exc:
+                problems.append(f"{name}[{index}]: {exc}")
+    if problems:
+        raise RuntimeError(
+            "invalid regex configuration in pipeline.profiler:\n  "
+            + "\n  ".join(problems))
+
+
+validate_patterns()
 
 
 class StoryProfiler:
@@ -96,7 +177,7 @@ class StoryProfiler:
         return cleaned
 
     @staticmethod
-    def audit_safety(text: str, tags: List[str] = None) -> SafetyAudit:
+    def audit_safety(text: str, tags: list[str] = None) -> SafetyAudit:
         """Evaluate text and tags against ethical, safety, and legal constraints."""
         tags_list = tags or []
         tags_str = " ".join(tags_list).lower()
@@ -117,24 +198,20 @@ class StoryProfiler:
 
         if flagged_terms:
             return SafetyAudit(
-                verdict=SafetyVerdict.FAIL_UNDERAGE_RISK,
-                reasons=["Underage indicator or CSAM legal compliance risk detected."],
-                flagged_terms=list(set(flagged_terms))
+                verdict=SafetyVerdict.FAIL_UNDERAGE_RISK, reasons=["Underage indicator or CSAM legal compliance risk detected."], flagged_terms=list(set(flagged_terms))
             )
 
         for pat in EXTREME_VIOLENCE_INDICATORS:
             matches = pat.findall(full_content)
             if matches:
                 return SafetyAudit(
-                    verdict=SafetyVerdict.FAIL_EXTREME_VIOLENCE,
-                    reasons=["Non-consensual extreme violence / prohibited content detected."],
-                    flagged_terms=list(set(matches))
+                    verdict=SafetyVerdict.FAIL_EXTREME_VIOLENCE, reasons=["Non-consensual extreme violence / prohibited content detected."], flagged_terms=list(set(matches))
                 )
 
         return SafetyAudit(verdict=SafetyVerdict.PASS)
 
     @staticmethod
-    def extract_metadata_from_headers(raw_text: str, default_title: str = "", default_author: str = "") -> Tuple[str, str]:
+    def extract_metadata_from_headers(raw_text: str, default_title: str = "", default_author: str = "") -> tuple[str, str]:
         """Extract title and author from Usenet headers, bylines, or dedications if present."""
         title = default_title or ""
         author = default_author or ""
@@ -177,7 +254,7 @@ class StoryProfiler:
         return title, author
 
     @classmethod
-    def calculate_text_metrics(cls, text: str, density_scan_chars: int = None) -> Dict[str, Any]:
+    def calculate_text_metrics(cls, text: str, density_scan_chars: int = None) -> dict[str, Any]:
         """Compute statistical and linguistic metrics for the story.
 
         density_scan_chars: when set, expensive density metrics (dialogue,
@@ -237,7 +314,7 @@ class StoryProfiler:
         sensory_density = round(sensory_count / max(len(density_words), 1), 4)
 
         # Explicit / intimacy density
-        explicit_count = sum(1 for w in density_words if w in EXPLICIT_TERMS)
+        explicit_count = sum(1 for w in density_words if EXPLICIT_PATTERN.match(w))
         explicit_density = round(explicit_count / max(len(density_words), 1), 4)
 
         # Audio duration estimation (150 words per minute is standard for narrative/erotic audio)

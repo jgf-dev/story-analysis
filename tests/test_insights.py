@@ -237,3 +237,245 @@ def test_ui_smoke(catalog, tmp_path):
     assert client.get("/combo").status_code == 200
     resp = client.get("/story/1")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Failure handling: a broken row must fail the run, not silently vanish
+# ---------------------------------------------------------------------------
+
+def _failing_csv(tmp_path, n=3):
+    rows = [(f"Story {i}", BASE_LONG, "college", "2000-01-01") for i in range(1, n + 1)]
+    path = tmp_path / "fail.csv"
+    _write_csv(path, rows)
+    return str(path)
+
+
+def _count(db, sql="SELECT count(*) FROM stories"):
+    """Run a scalar query and close the connection (avoids ResourceWarning)."""
+    conn = sqlite3.connect(db)
+    try:
+        return conn.execute(sql).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _ids(db):
+    conn = sqlite3.connect(db)
+    try:
+        return {r[0] for r in conn.execute("SELECT id FROM stories")}
+    finally:
+        conn.close()
+
+
+def test_error_signature_groups_by_cause():
+    # Messages differing only by row id / offset must collapse to one signature,
+    # otherwise the "distinct failure types" count is meaningless.
+    a = corpus_prep.error_signature("bad character range 3-2 at position 1992")
+    b = corpus_prep.error_signature("bad character range 3-2 at position 55")
+    c = corpus_prep.error_signature("KeyError: 'content'")
+    assert a == b
+    assert a != c
+
+
+def test_ingest_reports_errors_and_blocks_checkpoint(tmp_path, monkeypatch):
+    """A row that raises must be counted, reported, and NOT skipped."""
+    csv_path = _failing_csv(tmp_path)
+    db = str(tmp_path / "fail.sqlite")
+
+    def boom(row):
+        raise ValueError("simulated per-row failure")
+
+    monkeypatch.setattr(corpus_prep, "process_row", boom)
+    ing = FullCorpusIngester(db, db + ".state")
+    result = ing.ingest(csv_path, workers=1)
+
+    assert result["total_errors"] == 3
+    assert result["processed"] == 0
+    assert result["blocked_batches"] >= 1
+    # the distinct-cause summary must name the failure, not just count it
+    assert any("simulated per-row failure" in k for k in result["error_types"])
+    assert result["unprocessed_ids"] == ["1", "2", "3"]
+    # checkpoint must not have advanced past the failed rows
+    assert ing.last_offset == 0
+    assert _count(db) == 0
+
+
+def test_failed_rows_are_retried_not_skipped(tmp_path, monkeypatch):
+    """The core regression: a transient failure must not lose rows forever."""
+    csv_path = _failing_csv(tmp_path)
+    db = str(tmp_path / "retry.sqlite")
+
+    def boom(row):
+        raise ValueError("transient failure")
+
+    monkeypatch.setattr(corpus_prep, "process_row", boom)
+    FullCorpusIngester(db, db + ".state").ingest(csv_path, workers=1)
+    assert _count(db) == 0
+
+    # Second run with the bug fixed must process every row, not skip them.
+    monkeypatch.undo()
+    result = FullCorpusIngester(db, db + ".state").ingest(csv_path, workers=1)
+    assert result["total_errors"] == 0
+    assert result["processed"] == 3
+    assert _count(db) == 3
+
+
+def test_main_exits_nonzero_on_errors(tmp_path, monkeypatch, capsys):
+    csv_path = _failing_csv(tmp_path)
+    db = str(tmp_path / "exit.sqlite")
+
+    def boom(row):
+        raise ValueError("simulated per-row failure")
+
+    monkeypatch.setattr(corpus_prep, "process_row", boom)
+    with pytest.raises(SystemExit) as exc:
+        corpus_prep.main(["--csv", csv_path, "--db", db, "--workers", "1"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "FAILED" in out
+    assert "distinct failure types" in out
+    assert "simulated per-row failure" in out
+
+
+def test_main_exits_zero_on_clean_run(tmp_path):
+    csv_path = _failing_csv(tmp_path)
+    db = str(tmp_path / "clean.sqlite")
+    corpus_prep.main(["--csv", csv_path, "--db", db, "--workers", "1"])
+    with open(db + ".ingest_result.json") as f:
+        result = json.load(f)
+    assert result["total_errors"] == 0
+    assert result["processed"] == 3
+
+
+def test_allow_errors_flag_keeps_exit_zero(tmp_path, monkeypatch):
+    csv_path = _failing_csv(tmp_path)
+    db = str(tmp_path / "allow.sqlite")
+
+    def boom(row):
+        raise ValueError("simulated per-row failure")
+
+    monkeypatch.setattr(corpus_prep, "process_row", boom)
+    corpus_prep.main(["--csv", csv_path, "--db", db, "--workers", "1",
+                      "--allow-errors"])
+    with open(db + ".ingest_result.json") as f:
+        result = json.load(f)
+    assert result["total_errors"] == 3
+
+
+def test_first_batch_failure_blocks_later_successful_batches(tmp_path, monkeypatch):
+    """Regression: one failed batch must hold the checkpoint for the whole run.
+
+    A batch that fails *after* a batch that succeeded must not use the later
+    success to advance last_offset past the failed rows.
+    """
+    rows = [(f"Story {i}", BASE_LONG, "college", "2000-01-01") for i in range(1, 5)]
+    csv_path = tmp_path / "mixed.csv"
+    _write_csv(csv_path, rows)
+    db = str(tmp_path / "mixed.sqlite")
+
+    # Patch the batch size down so each row is its own batch.
+    monkeypatch.setattr(corpus_prep, "BATCH_ROWS", 1)
+
+    real_process_row = corpus_prep.process_row
+    calls = {"n": 0}
+
+    def flaky(row):
+        calls["n"] += 1
+        if calls["n"] == 2:  # second row fails; rows 3 and 4 succeed
+            raise ValueError("flaky row 2")
+        return real_process_row(row)
+
+    monkeypatch.setattr(corpus_prep, "process_row", flaky)
+    ing = corpus_prep.FullCorpusIngester(db, db + ".state")
+    result = ing.ingest(csv_path, workers=1)
+
+    assert result["total_errors"] == 1
+    assert result["processed"] == 3
+    # The checkpoint may advance past rows that succeeded, but must never reach
+    # the end of the file, which would skip the failed row on the next run.
+    assert ing.last_offset < os.path.getsize(csv_path)
+    # row 2 is the one that failed, so it must be absent after this run
+    ids = _ids(db)
+    assert 2 not in ids, ids
+
+    # retry with the flake gone must recover the missing row
+    monkeypatch.undo()
+    result2 = corpus_prep.FullCorpusIngester(db, db + ".state").ingest(csv_path, workers=1)
+    assert result2["total_errors"] == 0
+    ids = _ids(db)
+    assert ids == {1, 2, 3, 4}, ids
+
+
+def test_error_signature_set_is_bounded(tmp_path, monkeypatch):
+    """A varying error message must not grow the report without limit."""
+    csv_path = _failing_csv(tmp_path, n=5)
+    db = str(tmp_path / "bounded.sqlite")
+    counter = {"n": 0}
+
+    def boom(row):
+        counter["n"] += 1
+        raise ValueError(f"unique failure {counter['n']}")
+
+    monkeypatch.setattr(corpus_prep, "process_row", boom)
+    ing = FullCorpusIngester(db, db + ".state")
+    result = ing.ingest(csv_path, workers=1)
+    assert result["total_errors"] == 5
+    # digits are normalised away, so all five collapse to a single signature
+    assert len(result["error_types"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Regex configuration guard
+# ---------------------------------------------------------------------------
+
+def test_profiler_patterns_are_valid_at_import():
+    from pipeline import profiler
+    profiler.validate_patterns()  # must not raise
+
+
+def test_profiler_guard_rejects_empty_rule_list(monkeypatch):
+    from pipeline import profiler
+    monkeypatch.setitem(profiler.REGEX_PATTERNS, "EMPTY", [])
+    with pytest.raises(RuntimeError, match="EMPTY is empty"):
+        profiler.validate_patterns()
+
+
+def test_profiler_guard_rejects_non_pattern(monkeypatch):
+    from pipeline import profiler
+    monkeypatch.setitem(profiler.REGEX_PATTERNS, "BOGUS", ["not a pattern"])
+    with pytest.raises(RuntimeError, match="not a compiled pattern"):
+        profiler.validate_patterns()
+
+
+def test_no_regex_is_compiled_inside_a_function():
+    """Guard the property that makes a bad regex fail loudly.
+
+    Patterns compiled inside a function raise per row, where ``process_rows``
+    absorbs them; the run then reports success having processed nothing.
+    """
+    import ast
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    offenders = []
+    for sub in ("pipeline", "insights", "parse"):
+        for dirpath, _, filenames in os.walk(os.path.join(root, sub)):
+            if "__pycache__" in dirpath:
+                continue
+            for name in filenames:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    for inner in ast.walk(node):
+                        if (isinstance(inner, ast.Call)
+                                and isinstance(inner.func, ast.Attribute)
+                                and inner.func.attr == "compile"
+                                and isinstance(inner.func.value, ast.Name)
+                                and inner.func.value.id == "re"):
+                            offenders.append(f"{path}:{inner.lineno} in {node.name}()")
+    assert not offenders, (
+        "re.compile() must stay at module scope so a bad pattern fails at "
+        "import instead of being swallowed per row:\n  " + "\n  ".join(offenders))
