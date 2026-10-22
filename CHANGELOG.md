@@ -12,6 +12,11 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- Implementation plan for STO-1247 (safety filter false positives) under
+  `docs/plans/STO-1247/`: `plan.md` with 6 phases and 29 tasks, `baseline.md`
+  with the pre-change measurements, and `checkpoints/spec-to-plan.yaml` +
+  `checkpoints/plan-to-tasks.yaml` for requirement traceability (8/8
+  requirements mapped). The plan is documentation only — no code changed.
 - `scripts/ingest.sh` — wrapper for full-corpus ingestion runs. Sets
   `set -Eeuo pipefail`, tees output to a timestamped log under `data/logs/`,
   and captures `${PIPESTATUS[0]}` so the pipeline reports Python's exit status
