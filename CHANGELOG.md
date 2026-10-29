@@ -12,6 +12,15 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- **Paradev workspace lifecycle.** `.superset/config.json` installs this
+  repo's dependencies when a workspace is created, copies gitignored `.env`
+  files from `$SUPERSET_ROOT_PATH`, and starts the insight UI from the Run
+  button. Parallel workspaces no longer all bind `127.0.0.1:8765`: setup
+  reserves a free port in `8765–8864` (recorded in
+  `~/.superset/port-allocations.json`), and deleting the workspace stops
+  that UI process and releases the port. The Run script exports the
+  workspace `.env` into the UI process so settings such as `PIPER_VOICE`
+  are visible. The catalogue under `data/` is not copied.
 - `scripts/ingest.sh` — wrapper for full-corpus ingestion runs. Sets
   `set -Eeuo pipefail`, tees output to a timestamped log under `data/logs/`,
   and captures `${PIPESTATUS[0]}` so the pipeline reports Python's exit status

@@ -24,3 +24,9 @@ data/output/
 data/stories_clean.csv
 data/logs/
 .pytest_cache/
+
+# Paradev writes these per workspace. The port differs across worktrees.
+.superset/ports.json
+.superset/dev-port
+.superset/dev-server.pid
+.superset/config.local.json

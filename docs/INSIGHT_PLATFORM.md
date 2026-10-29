@@ -146,6 +146,24 @@ python -m insights.ui --db data/catalog.sqlite --out-dir insights_output
 # http://127.0.0.1:8765  (dashboard, /search, /combo, /story/<id>)
 ```
 
+That command still defaults to port 8765. In Paradev, use the Run button
+instead of starting it by hand. `.superset/config.json` does three things:
+
+- **Setup** (on workspace create) runs `uv sync --frozen --all-groups` and
+  copies `.env` and other `.env.*` files, except `*.example` / `*.sample` /
+  `*.template`, from `$SUPERSET_ROOT_PATH`. `data/`, sqlite catalogues, and
+  `.venv` are not copied; `uv` builds a fresh environment in the worktree.
+- **Run** starts `python -m insights.ui` on a port reserved for this
+  workspace. The first free port in `8765–8864` wins, so two workspaces
+  can serve the UI at the same time. The choice is written to
+  `.superset/dev-port` and labeled "Insight UI" in `.superset/ports.json`
+  (both gitignored). Assignments in the workspace `.env` are exported
+  into that process, so `PIPER_VOICE` is set, and the values are not
+  printed.
+- **Teardown** (on workspace delete) stops that UI process and releases
+  the port. It only signals a process whose working directory is this
+  workspace and whose command line is the insight UI.
+
 TTS audition uses the cheapest available **local** engine — `piper` if a voice
 model is configured (`PIPER_VOICE`), else `espeak-ng`/`espeak`. Audio is a short
 excerpt for inspiration only; it is never production audio and nothing leaves
