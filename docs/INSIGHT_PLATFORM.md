@@ -30,7 +30,7 @@ bounded-memory pass:
    the first 3,000 chars per post (headers live at the top) for speed.
 3. **Safety audit** — zero-tolerance underage/CSAM and extreme-violence
    screening. Flagged rows are retained as metadata only and excluded from all
-   inspiration-facing views.
+   inspiration-facing views. See *Safety screening* below for the three verdicts.
 4. **Metrics + quality + tags** — word counts, dialogue ratio, TTR, sensory and
    explicit density, the 0–100 quality rubric and Tier 1–4 classification,
    tropes/archetypes/settings, POV, pacing, heat, duration tier.
@@ -89,6 +89,44 @@ scripts/ingest.sh --csv data/stories_clean.csv --db data/catalog.sqlite --worker
 
 If you invoke Python directly, use `set -o pipefail` or check
 `${PIPESTATUS[0]}`.
+
+### Safety screening
+
+`StoryProfiler.audit_safety` returns one of three verdicts, in order of
+precedence:
+
+| Verdict | Meaning | Downstream |
+| --- | --- | --- |
+| `FAIL_UNDERAGE_RISK` | Underage/CSAM indicator, or an underage category tag. **Fail-closed.** | Quarantined |
+| `FAIL_EXTREME_VIOLENCE` | Genuinely prohibited content: necrophilia, snuff, bestiality, zoophilia. | Quarantined |
+| `FLAGGED_MANUAL_REVIEW` | Ambiguous but legal language: abuse, rape, murder, assault, suicide. | Quarantined, but distinguishable for triage |
+| `PASS` | No indicator. | Eligible for TTS, embeddings, NER, UI |
+
+Every consumer gates on `== PASS`, so all three non-PASS verdicts are excluded
+from inspiration-facing views. `FLAGGED_MANUAL_REVIEW` exists so a reviewer can
+triage ambiguous language rather than treat it as prohibited content.
+
+**Rules require real context.** An earlier version matched the bare words
+`thirteen|fourteen|fifteen` anywhere, which failed clock times, prices, jersey
+numbers and durations — 455 false positives in a 5,000-row sample. The rules now
+require an age construction (`N years old`, `aged N`, or an age verb such as
+`was fifteen` / `turned fourteen`), excluding a following unit of time or
+measure. Removing the bare rule outright was not sufficient: it let 288 rows
+containing genuine age assertions pass, so the age-verb rule replaces it.
+
+**Boilerplate is stripped before screening.** Remailer footers such as
+`anon.penet.fi` embed the string `abuse@`, which previously matched the violence
+list and quarantined 109 of 350 violence verdicts. `ANONYMISER_BOILERPLATE`
+patterns remove them in `clean_text`.
+
+**Tag matching is word-boundary based.** A substring test made `"youthful"`
+match the `"youth"` keyword and fail an unrelated story.
+
+Measure the current distribution with:
+
+```bash
+python scripts/measure_safety.py --csv data/stories_clean.csv --limit 5000
+```
 
 ### Regex configuration
 

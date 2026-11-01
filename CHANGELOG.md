@@ -12,6 +12,9 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- `scripts/measure_safety.py` — samples the corpus and reports the safety
+  verdict distribution plus the false-positive classes, so the effect of a rule
+  change is measurable rather than asserted. Supports `--limit` and `--json`.
 - Implementation plan for STO-1247 (safety filter false positives) under
   `docs/plans/STO-1247/`: `plan.md` with 6 phases and 29 tasks, `baseline.md`
   with the pre-change measurements, and `checkpoints/spec-to-plan.yaml` +
@@ -46,6 +49,23 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- **Safety verdicts are now three-tier.** `abuse`, `rape`, `murder`, `assault`
+  and `suicide` moved out of `EXTREME_VIOLENCE_INDICATORS` into a new
+  `MANUAL_REVIEW_INDICATORS` list, producing `FLAGGED_MANUAL_REVIEW` instead of
+  `FAIL_EXTREME_VIOLENCE`. The verdict was already defined in
+  `pipeline/schemas.py` but never produced. It is quarantined from every
+  inspiration-facing view exactly like a FAIL, but distinguishable so a reviewer
+  can triage ambiguous language rather than treat it as prohibited content.
+  `FAIL_EXTREME_VIOLENCE` now covers only necrophilia, snuff, bestiality and
+  zoophilia.
+- **Measured effect on a 5,000-row corpus sample**: PASS rate **56.9% → 59.1%**;
+  bare-numeral false positives **455 → 0**; `abuse`-only violence verdicts
+  **109 → 0**; `FAIL_EXTREME_VIOLENCE` **350 → 9**. The remaining
+  `FAIL_UNDERAGE_RISK` verdicts are genuine: tag-driven (574), real age phrases
+  (437), age-verb constructions (403), and the retained fail-closed school-level
+  and `boyhood` rules (264).
+- Documentation: `docs/INSIGHT_PLATFORM.md` gained a *Safety screening* section
+  describing the three verdicts and the context requirements.
 - `insights.corpus_prep.main()` now exits **1** when
   `errors + write_errors + dedup_errors` is non-zero, after printing a summary.
   Previously a run in which every row failed exited 0.
@@ -65,6 +85,21 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Fixed
 
+- **Safety filter false positives quarantined 43% of the corpus.** Three
+  independent defects in `pipeline/profiler.py` caused it, all now fixed:
+  - The bare-numeral rule matched the words `thirteen|fourteen|fifteen` with no
+    age context, failing clock times, prices, jersey numbers and durations —
+    **455 false positives** in a 5,000-row sample. Replaced with an age-verb
+    construction (`was fifteen`, `turned fourteen`) that excludes a following
+    unit of time or measure. Removing the rule outright was not sufficient: it
+    let **288 rows** containing genuine age assertions pass, so the age-verb
+    rule replaces it rather than simply deleting the alternatives.
+  - The `anon.penet.fi` remailer footer embeds the string `abuse@`, which
+    matched the bare `abuse` alternative in the violence list and quarantined
+    **109 of 350** violence verdicts. New `ANONYMISER_BOILERPLATE` patterns
+    strip these footers in `clean_text` before screening.
+  - Tag matching was substring-based, so `"youthful"` matched the `"youth"`
+    keyword and failed an unrelated story. Now word-boundary based.
 - **Silent ingest failures.** A malformed regex in `pipeline/profiler.py` raised
   once per row, was absorbed by `process_rows`, and the ingest finished
   reporting `processed: 0` with **exit code 0**. Two things made it invisible:

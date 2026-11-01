@@ -12,7 +12,10 @@ from pipeline.schemas import (
     SafetyVerdict,
     QualityTier,
     HeatLevel,
-    AudioDurationTier
+    AudioDurationTier,
+    ProcessedStory,
+    SafetyAudit,
+    QualityBreakdown,
 )
 from pipeline.profiler import StoryProfiler
 from pipeline.dedup import (
@@ -89,6 +92,168 @@ The room was quiet."""
         self.assertTrue(metrics["dialogue_ratio"] > 0.0)
         self.assertTrue(metrics["sensory_density"] > 0.0)
         self.assertTrue(metrics["ttr"] > 0.5)
+
+
+# (text, tags, expected verdict, label)
+FALSE_POSITIVES = [
+    ("After fifteen minutes of getting his ass plowed", [], SafetyVerdict.PASS,
+     "duration, not an age"),
+    ("his number was thirteen", [], SafetyVerdict.PASS,
+     "jersey number"),
+    ("the lamp only cost fourteen", [], SafetyVerdict.PASS,
+     "price"),
+    ("Raphael was thirteen penis-lengths tall", [], SafetyVerdict.PASS,
+     "unit of measurement"),
+    ("Um... it's six-fifteen", [], SafetyVerdict.PASS,
+     "clock time"),
+    ("report inappropriate use to abuse@anon.penet.fi", [], SafetyVerdict.PASS,
+     "anonymiser footer"),
+]
+
+# Ambiguous-but-legal violence language. Not a FAIL verdict, but quarantined
+# for review rather than passed — see REQ-007.
+REVIEW_CASES = [
+    ("Sgt Bullock continued his assault on the hard throbbing cock", [],
+     SafetyVerdict.FLAGGED_MANUAL_REVIEW, "erotic metaphor"),
+    ("He screamed bloody murder into my gag", [],
+     SafetyVerdict.FLAGGED_MANUAL_REVIEW, "idiom"),
+    ("he would murder me", [],
+     SafetyVerdict.FLAGGED_MANUAL_REVIEW, "hyperbole"),
+]
+
+# Genuinely prohibited content must still hard-fail.
+PROHIBITED_CASES = [
+    ("a story about necrophilia", [], SafetyVerdict.FAIL_EXTREME_VIOLENCE,
+     "necrophilia"),
+    ("snuff film content", [], SafetyVerdict.FAIL_EXTREME_VIOLENCE,
+     "snuff"),
+    ("bestiality with a dog", [], SafetyVerdict.FAIL_EXTREME_VIOLENCE,
+     "bestiality"),
+]
+
+TRUE_POSITIVES = [
+    ("Tommy was a 14-year-old freshman in high school.", ["teen", "school"],
+     SafetyVerdict.FAIL_UNDERAGE_RISK, "explicit age + school"),
+    ("he was fifteen years old", [], SafetyVerdict.FAIL_UNDERAGE_RISK,
+     "explicit age phrase"),
+    ("They sat together talking about life.", ["adult-youth"],
+     SafetyVerdict.FAIL_UNDERAGE_RISK, "underage category tag"),
+    ("girls under 18", [], SafetyVerdict.FAIL_UNDERAGE_RISK,
+     "under-18 phrase"),
+    ("Marcus, thirty-two years old, poured another cup of coffee.",
+     ["romance", "contemporary"], SafetyVerdict.PASS, "adult control"),
+]
+
+
+# Genuine age assertions that must keep failing. These were briefly lost
+# when the bare-numeral rule was removed outright: 288 rows containing
+# "I was fifteen" / "who was 15" started passing. The age-verb rule restores
+# them while still excluding durations and measurements.
+AGE_ASSERTIONS = [
+    ("he was fifteen", [], SafetyVerdict.FAIL_UNDERAGE_RISK, "was + word"),
+    ("I was fifteen and on the swim team", [], SafetyVerdict.FAIL_UNDERAGE_RISK,
+     "was + word in prose"),
+    ("who was 15, with us", [], SafetyVerdict.FAIL_UNDERAGE_RISK, "was + digit"),
+    ("when I was fourteen", [], SafetyVerdict.FAIL_UNDERAGE_RISK, "when I was"),
+    ("he turned fourteen", [], SafetyVerdict.FAIL_UNDERAGE_RISK, "turned"),
+    ("he was not fifteen", [], SafetyVerdict.PASS, "negated age"),
+]
+
+# Durations and measurements that must NOT fail.
+NON_AGE_NUMERALS = [
+    ("he had been doing for fifteen years already", [], SafetyVerdict.PASS,
+     "years of duration"),
+    ("need about fifteen more chapters", [], SafetyVerdict.PASS,
+     "count of chapters"),
+    ("he waited fifteen seconds", [], SafetyVerdict.PASS, "seconds"),
+]
+
+
+class TestSafetyFilterPrecision(unittest.TestCase):
+    """STO-1247: the safety filter must not fail ordinary prose.
+
+    Each case is a class of false positive measured on the real corpus, paired
+    with the true-positive cases that must keep failing. The filter is
+    deliberately fail-closed on underage content, so a false negative is worse
+    than a false positive — these tests assert both directions.
+    """
+
+    def test_false_positive_classes_do_not_fail(self):
+        for text, tags, expected, label in FALSE_POSITIVES:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value} "
+                    f"(flagged: {audit.flagged_terms})")
+
+    def test_ambiguous_violence_routes_to_review_not_fail(self):
+        """REQ-001: these must not be a FAIL verdict, but must be quarantined."""
+        for text, tags, expected, label in REVIEW_CASES:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value}")
+                self.assertNotEqual(audit.verdict, SafetyVerdict.PASS,
+                                    f"{label} must not pass unreviewed")
+
+    def test_prohibited_content_still_hard_fails(self):
+        for text, tags, expected, label in PROHIBITED_CASES:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value}")
+
+    def test_true_positive_classes_still_fail(self):
+        for text, tags, expected, label in TRUE_POSITIVES:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value}")
+
+    def test_age_assertions_still_fail(self):
+        for text, tags, expected, label in AGE_ASSERTIONS:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value}")
+
+    def test_non_age_numerals_do_not_fail(self):
+        for text, tags, expected, label in NON_AGE_NUMERALS:
+            with self.subTest(label=label):
+                audit = StoryProfiler.audit_safety(text, tags)
+                self.assertEqual(
+                    audit.verdict, expected,
+                    f"{label}: {text!r} -> {audit.verdict.value}")
+
+    def test_negation_is_adjacency_scoped(self):
+        """A negator must not suppress a genuine reference elsewhere."""
+        audit = StoryProfiler.audit_safety(
+            "he was not fifteen, but his brother was fourteen", [])
+        self.assertEqual(audit.verdict, SafetyVerdict.FAIL_UNDERAGE_RISK)
+
+    def test_anonymiser_footer_is_stripped_before_screening(self):
+        """The footer must not survive cleaning, or it reaches the screen."""
+        raw = ("From: x@anon.penet.fi\n"
+               "*Automatically* ANONYMIZED. Please, report inappropriate use to\n"
+               "abuse@anon.penet.fi For information write to help@anon.penet.fi\n\n"
+               "He walked into the bar and saw the jock standing there.\n")
+        cleaned = StoryProfiler.clean_text(raw)
+        self.assertNotIn("anon.penet.fi", cleaned)
+        self.assertNotIn("report inappropriate use", cleaned.lower())
+        self.assertIn("walked into the bar", cleaned)
+        self.assertEqual(StoryProfiler.audit_safety(cleaned, []).verdict,
+                         SafetyVerdict.PASS)
+
+    def test_tag_matching_is_not_substring_based(self):
+        """'youthful' must not match the 'youth' keyword."""
+        audit = StoryProfiler.audit_safety("They talked about the weather.", ["youthful"])
+        self.assertEqual(audit.verdict, SafetyVerdict.PASS,
+                         "'youthful' is not an underage category tag")
 
 
 class TestDeduplication(unittest.TestCase):
@@ -185,6 +350,36 @@ class TestTTSPrioritizer(unittest.TestCase):
             self.assertTrue(r.is_canonical)
             self.assertNotEqual(r.id, "raw_story_005_safety_violation")
             self.assertNotEqual(r.id, "raw_story_003_near_duplicate")
+
+    def test_review_verdict_is_quarantined_from_tts_queue(self):
+        """REQ-007: FLAGGED_MANUAL_REVIEW must be excluded like a FAIL.
+
+        Every downstream consumer gates on `== PASS`, so a new non-PASS verdict
+        is quarantined by construction — but that is an assumption until tested.
+        """
+        def story(sid, verdict, score=90.0):
+            return ProcessedStory(
+                id=sid, original_id=sid, title=f"T {sid}", author="A",
+                clean_text="He walked into the bar. " * 40,
+                word_count=200, char_count=1000, paragraph_count=4,
+                exact_hash="h", cluster_id=sid, is_canonical=True,
+                safety=SafetyAudit(verdict=verdict),
+                quality=QualityBreakdown(20, 20, 25, 15, 20, score,
+                                         QualityTier.TIER_1_MASTER),
+            )
+
+        stories = [
+            story("pass", SafetyVerdict.PASS),
+            story("review", SafetyVerdict.FLAGGED_MANUAL_REVIEW),
+            story("underage", SafetyVerdict.FAIL_UNDERAGE_RISK),
+            story("violence", SafetyVerdict.FAIL_EXTREME_VIOLENCE),
+        ]
+        ranked = TTSPrioritizer.filter_and_rank_candidates(stories, min_quality_score=75.0)
+        ids = {r.id for r in ranked}
+        self.assertIn("pass", ids)
+        self.assertNotIn("review", ids, "FLAGGED_MANUAL_REVIEW must not reach the TTS queue")
+        self.assertNotIn("underage", ids)
+        self.assertNotIn("violence", ids)
 
     def test_export_prunes_stale_chunks(self):
         """A run over a different input must not leave the previous run's

@@ -97,3 +97,56 @@ Every one is a duration, a count, or a recollection — none is an age reference
 | `abuse`-only violence verdicts (100 rows) | 3 | 0 |
 | PASS rate (100 rows) | 73% | higher; exact figure recorded after the change |
 | Existing test suite | 43 passed | 43+ passed, no regressions |
+
+## 6. Results after the fix
+
+Measured on a 5,000-row sample of the full corpus
+(`python scripts/measure_safety.py --csv data/stories_clean.csv --limit 5000`).
+
+### Verdict distribution
+
+| Verdict | Before | After |
+|---|---|---|
+| PASS | 2,845 (56.9%) | **2,956 (59.1%)** |
+| `FAIL_UNDERAGE_RISK` | 1,805 (36.1%) | 1,678 (33.6%) |
+| `FAIL_EXTREME_VIOLENCE` | 350 (7.0%) | **9 (0.2%)** |
+| `FLAGGED_MANUAL_REVIEW` | 0 (0.0%) | 357 (7.1%) |
+
+### False-positive classes
+
+| Class | Before | After |
+|---|---|---|
+| Bare-numeral-only underage verdicts | **455** | **0** |
+| `abuse`-only violence verdicts | **109** | **0** |
+
+### Remaining `FAIL_UNDERAGE_RISK` verdicts are genuine
+
+| Cause | n |
+|---|---|
+| Tag-driven (`adult-youth` etc.) | 574 |
+| Real age phrase (`N years old` / `aged N`) | 437 |
+| Age-verb construction (`was fifteen`, `turned fourteen`) | 403 |
+| Retained fail-closed rules (`junior high`, `kindergarten`, `boyhood`, …) | 264 |
+
+### Probe harness
+
+All 16 probe cases pass: 9 false-positive classes now `PASS`, 3 ambiguous
+violence cases now `FLAGGED_MANUAL_REVIEW`, 3 prohibited cases still
+`FAIL_EXTREME_VIOLENCE`, and all genuine underage cases still
+`FAIL_UNDERAGE_RISK`.
+
+### A regression found and fixed during implementation
+
+Removing the bare-numeral rule outright was **not sufficient**. It let **288
+rows** containing genuine age assertions (`"I was fifteen"`, `"who was 15"`,
+`"when I was fourteen"`) start passing — a false negative, which for a
+fail-closed safety gate is worse than the false positive being fixed. The
+age-verb rule was added to restore them while still excluding durations and
+measurements. This is recorded because it is the kind of error the "narrow the
+rule" approach invites.
+
+### Test suite
+
+53 tests + 26 subtests pass (was 43). Lint on the changed files is unchanged
+from baseline (12 findings, none new).
+

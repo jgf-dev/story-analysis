@@ -22,19 +22,80 @@ HEADER_PATTERNS = [
     re.compile(r"^[~*=\-_#]{4,}\s*$", re.MULTILINE),  # ASCII divider lines
 ]
 
+# Remailer / anonymiser boilerplate. These footers are added by the archive
+# software, not the author, and they contain strings that trip the safety
+# screen — the anon.penet.fi footer embeds "abuse@anon.penet.fi", which matched
+# the bare "abuse" alternative in EXTREME_VIOLENCE_INDICATORS and quarantined
+# 109 of 350 violence verdicts on a 5,000-row sample. Stripped before screening.
+ANONYMISER_BOILERPLATE = [
+    re.compile(r"^.*\*?automatically\*?\s+anonymized.*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^.*report\s+inappropriate\s+use\s+to.*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^.*\bhelp@anon\.penet\.fi\b.*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^.*\banon\.penet\.fi\b.*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^.*\bfor\s+information\s+\(incl\.\s+non-anon\s+reply\).*$", re.IGNORECASE | re.MULTILINE),
+]
+
 # Underage / CSAM risk terms (Strict Zero-Tolerance Safety Filters)
+#
+# Every rule here requires real age context. Rule 4 previously ended with the
+# bare alternatives `fourteen|fifteen|thirteen`, which matched any occurrence of
+# those words — clock times, prices, jersey numbers, durations — and produced
+# 455 false positives in a 5,000-row sample (10 of 19 underage verdicts in the
+# 100-row catalogue).
+#
+# Removing it outright created the opposite problem: 288 rows containing a
+# genuine age assertion ("I was fifteen", "who was 15", "when I was fourteen")
+# started passing. Rule 4 below replaces the bare alternatives with an
+# age-verb construction, which catches those cases while still excluding
+# durations and measurements. A false negative here is a compliance failure, so
+# this rule errs toward flagging.
 UNDERAGE_INDICATORS = [
     re.compile(r"\b(?:1[0-5]|thirteen|fourteen|fifteen)\s*(?:-| )*(?:years?|yrs?)(?:-| )*old\b", re.IGNORECASE),
     re.compile(r"\bage[d]?\s*(?:1[0-5]|thirteen|fourteen|fifteen)\b", re.IGNORECASE),
     re.compile(r"\b(?:under\s*18|underage|prepubescent|pedo|pedophil\w*|hebephil\w*|kindergarten|elementary\s+school|middle\s+school|junior\s+high)\b", re.IGNORECASE),
-    re.compile(r"\b(?:high\s+school\s+freshman|freshman\s+boy|junior\s+high\s+boy|middle\s+school\s+boy|fourteen|fifteen|thirteen)\b", re.IGNORECASE),
+    # Age-verb construction: "was fifteen", "who was 15", "turned fourteen".
+    # Excludes a following unit of time or measure, which is what made the old
+    # bare-numeral rule fire on "fifteen minutes" and "fifteen years ago", and
+    # excludes a non-age subject ("his number was thirteen").
+    re.compile(
+        r"(?<!number\s)(?<!jersey\s)(?<!score\s)(?<!count\s)(?<!total\s)"
+        r"(?<!page\s)(?<!chapter\s)(?<!room\s)(?<!floor\s)(?<!apartment\s)"
+        r"(?<!unit\s)(?<!size\s)(?<!shoe\s)(?<!grade\s)(?<!route\s)(?<!exit\s)"
+        r"\b(?:was|were|is|are|am|be|been|being|turned|turning|turns|aged|age)\s+"
+        r"(?:1[0-5]|thirteen|fourteen|fifteen)\b"
+        r"(?!\s*(?:minutes?|seconds?|hours?|days?|weeks?|months?|years?|percent|"
+        r"feet|foot|inch(?:es)?|miles?|dollars?|bucks?|chapters?|pages?|yards?|"
+        r"meters?|pounds?|degrees?|times?|ways?|stories|story|lines?|words?|"
+        r"lengths?|penis-lengths?))",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:high\s+school\s+freshman|freshman\s+boy|junior\s+high\s+boy|middle\s+school\s+boy)\b", re.IGNORECASE),
     re.compile(r"\b(?:boyhood|(?:child|kid|toddler|infant|kiddy)\s+(?:abuse|rape|violence|victim|exploitation|porn|sex))\b", re.IGNORECASE),
 ]
 
 UNDERAGE_TAG_KEYWORDS = {"adult-youth", "youth", "underage", "prepubescent", "junior-high"}
 
+# Genuinely prohibited content. Fail-closed, no review path.
 EXTREME_VIOLENCE_INDICATORS = [
-    re.compile(r"\b(necrophilia|snuff|bestiality|zoophilia|abuse|suicide|kill\s+myself|rape|murder|assault|(?:stab|shoot)\s+(?:him|her|them))\b", re.IGNORECASE),
+    re.compile(r"\b(necrophilia|snuff|bestiality|zoophilia)\b", re.IGNORECASE),
+]
+
+# Ambiguous but legal language. These words appear constantly in erotic prose as
+# metaphor ("his assault on the hard throbbing cock", "screamed bloody murder")
+# and in archive boilerplate ("report inappropriate use to abuse@..."), so they
+# are quarantined for review rather than treated as prohibited content.
+#
+# The email/URL guard matters: a bare \b(abuse|rape)\b matched the substring in
+# "abuse@anon.penet.fi", which alone drove 109 of 350 violence verdicts on a
+# 5,000-row sample.
+MANUAL_REVIEW_INDICATORS = [
+    re.compile(
+        r"(?<![\w@.])"
+        r"(?:abuse|rape|murder|assault|suicide|kill\s+myself)"
+        r"(?![\w@]|\.[a-z]{2,})",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:stab|shoot)\s+(?:him|her|them)\b", re.IGNORECASE),
 ]
 
 # Sensory vocabulary lists for immersion and quality scoring
@@ -85,6 +146,32 @@ EXPLICIT_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Negators that, when immediately preceding an age indicator, mean the text is
+# asserting the opposite ("he was not fifteen"). Deliberately narrow: only a
+# negator within a few words before the match counts, so a negation elsewhere in
+# the sentence cannot suppress a genuine reference.
+NEGATOR_PATTERN = re.compile(
+    r"\b(?:not|never|no\s+longer|wasn'?t|isn'?t|aren'?t|weren'?t|didn'?t|doesn'?t|don'?t)\b"
+    r"(?:\s+\w+){0,3}\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_negated(text: str, match: str) -> bool:
+    """True if the first occurrence of ``match`` is directly negated.
+
+    ``match`` comes from ``re.findall``, so it may be a group rather than the
+    whole match; search for it and inspect the preceding window.
+    """
+    if not match:
+        return False
+    idx = text.find(match.lower())
+    if idx <= 0:
+        return False
+    window = text[max(0, idx - 40):idx]
+    return bool(NEGATOR_PATTERN.search(window))
+
+
 # Every pattern that participates in cleaning or safety screening. They live at
 # module scope on purpose: a malformed regex then raises ImportError here, at
 # import time. Compiled inside a function instead, the same regex error would be
@@ -92,8 +179,10 @@ EXPLICIT_PATTERN = re.compile(
 # reporting "0 rows processed" with a success exit code.
 REGEX_PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "HEADER_PATTERNS": HEADER_PATTERNS,
+    "ANONYMISER_BOILERPLATE": ANONYMISER_BOILERPLATE,
     "UNDERAGE_INDICATORS": UNDERAGE_INDICATORS,
     "EXTREME_VIOLENCE_INDICATORS": EXTREME_VIOLENCE_INDICATORS,
+    "MANUAL_REVIEW_INDICATORS": MANUAL_REVIEW_INDICATORS,
     "EXPLICIT_PATTERN": [EXPLICIT_PATTERN],
 }
 
@@ -166,6 +255,12 @@ class StoryProfiler:
             for pattern in HEADER_PATTERNS:
                 text = pattern.sub("", text)
 
+        # 4b. Remove remailer/anonymiser boilerplate. Applied to the whole text
+        # (not just the header window) because these footers can appear at the
+        # end of a post, and they carry strings that trip the safety screen.
+        for pattern in ANONYMISER_BOILERPLATE:
+            text = pattern.sub("", text)
+
         # 5. Fix common OCR / encoding mojibake glitches
         text = text.replace("â€™", "'").replace("â€œ", '"').replace("â€", '"').replace("â€”", "—")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -178,23 +273,45 @@ class StoryProfiler:
 
     @staticmethod
     def audit_safety(text: str, tags: list[str] = None) -> SafetyAudit:
-        """Evaluate text and tags against ethical, safety, and legal constraints."""
+        """Evaluate text and tags against ethical, safety, and legal constraints.
+
+        Three outcomes, in order of precedence:
+
+        - ``FAIL_UNDERAGE_RISK`` — fail-closed. Any underage/CSAM indicator, or
+          an underage category tag. A false negative here is a compliance
+          failure, so this gate is deliberately over-inclusive relative to the
+          others.
+        - ``FAIL_EXTREME_VIOLENCE`` — genuinely prohibited content
+          (necrophilia, snuff, bestiality, zoophilia).
+        - ``FLAGGED_MANUAL_REVIEW`` — ambiguous but legal language (abuse, rape,
+          murder, assault, suicide). Quarantined from all inspiration-facing
+          views exactly like a FAIL, but distinguishable so a reviewer can
+          triage rather than treat it as prohibited.
+        """
         tags_list = tags or []
         tags_str = " ".join(tags_list).lower()
         full_content = f"{tags_str} {text.lower()}"
 
         flagged_terms = []
 
-        # Check tag-level indicators (e.g. category 'adult-youth', 'highschool', etc.)
+        # Check tag-level indicators (e.g. category 'adult-youth', 'highschool').
+        # Matched on word boundaries, not substrings: a substring test made
+        # "youthful" match the "youth" keyword and fail an unrelated story.
         for tag in tags_list:
             tag_clean = tag.lower().strip()
-            if any(k in tag_clean for k in UNDERAGE_TAG_KEYWORDS):
+            tag_words = set(re.findall(r"[a-z0-9]+", tag_clean))
+            if tag_words & UNDERAGE_TAG_KEYWORDS:
                 flagged_terms.append(tag_clean)
 
         for pat in UNDERAGE_INDICATORS:
             matches = pat.findall(full_content)
             if matches:
-                flagged_terms.extend(matches)
+                # Drop matches that are directly negated ("he was not fifteen").
+                # Scoped narrowly to an immediately-preceding negator so it
+                # cannot suppress a genuine reference elsewhere in the text.
+                kept = [m for m in matches if not _is_negated(full_content, m)]
+                if kept:
+                    flagged_terms.extend(kept)
 
         if flagged_terms:
             return SafetyAudit(
@@ -207,6 +324,19 @@ class StoryProfiler:
                 return SafetyAudit(
                     verdict=SafetyVerdict.FAIL_EXTREME_VIOLENCE, reasons=["Non-consensual extreme violence / prohibited content detected."], flagged_terms=list(set(matches))
                 )
+
+        review_terms = []
+        for pat in MANUAL_REVIEW_INDICATORS:
+            matches = pat.findall(full_content)
+            if matches:
+                review_terms.extend(matches)
+
+        if review_terms:
+            return SafetyAudit(
+                verdict=SafetyVerdict.FLAGGED_MANUAL_REVIEW,
+                reasons=["Ambiguous violence/abuse language; requires human review."],
+                flagged_terms=list(set(review_terms)),
+            )
 
         return SafetyAudit(verdict=SafetyVerdict.PASS)
 
