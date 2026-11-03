@@ -15,9 +15,11 @@ import argparse
 import csv
 import io
 import json
+import pathlib
 import re
 import sys
 from collections import Counter
+from collections.abc import Generator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -38,10 +40,29 @@ UNDERAGE_TAGS = {"adult-youth", "youth", "underage", "prepubescent", "junior-hig
 ANONYMISER = re.compile(r"anon\.penet\.fi|report\s+inappropriate\s+use", re.IGNORECASE)
 
 
-def read_rows(csv_path: str, limit: int | None):
-    """Yield dict rows using an RFC-quote-balanced reader (multi-line records)."""
-    with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
-        fieldnames = next(csv.reader(f))
+def read_rows(csv_path: str, limit: int | None = None) -> Generator[dict[str, str], None, None]:
+    """Yield dict rows safely using an RFC-quote-balanced reader."""
+    # Define a strict boundary directory (e.g., the current working directory or a dedicated data folder)
+    BASE_DIR = pathlib.Path().cwd()
+
+    # Resolve the target path safely
+    target_path = pathlib.Path(csv_path).resolve()
+
+    # Strict boundary check: Prevent escaping the base directory
+    if not target_path.is_relative_to(BASE_DIR):
+        raise PermissionError("Access denied: Path traversal attempt detected.")
+
+    # Ensure it's a file, not a directory or special device
+    if not target_path.is_file():
+        raise FileNotFoundError(f"The specified file does not exist or is invalid: {csv_path}")
+
+    with open(target_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+        # Avoid crashing if the file is completely empty
+        first_line = next(csv.reader(f), None)
+        if not first_line:
+            return
+        fieldnames = first_line
+
         buf: list[str] = []
         quote_count = 0
         n = 0
@@ -50,10 +71,17 @@ def read_rows(csv_path: str, limit: int | None):
             quote_count += line.count('"')
             if quote_count % 2:
                 continue
-            row = next(csv.reader(io.StringIO("".join(buf))))
+
+            # Safely parse the buffered lines
+            try:
+                row = next(csv.reader(io.StringIO("".join(buf))))
+            except StopIteration:
+                break
+
             buf = []
             quote_count = 0
             yield {name: row[i] if i < len(row) else "" for i, name in enumerate(fieldnames)}
+
             n += 1
             if limit and n >= limit:
                 return
@@ -140,7 +168,7 @@ def main() -> None:
     print()
     print("verdicts:")
     for k, v in verdicts.most_common():
-        print(f"  {k:24s} {v:6d}  ({100*v/max(n,1):5.1f}%)  median_words={median(words_by_verdict.get(k, [])):,.0f}")
+        print(f"  {k:24s} {v:6d}  ({100 * v / max(n, 1):5.1f}%)  median_words={median(words_by_verdict.get(k, [])):,.0f}")
     print()
     print("FAIL_UNDERAGE_RISK causes:")
     for k, v in underage_causes.most_common():
