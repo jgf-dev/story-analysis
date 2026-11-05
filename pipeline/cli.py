@@ -145,7 +145,7 @@ def main():
         vector_index.save(str(vector_index_path))
         print(f"Vector index built with {len(vector_index.items)} items and {len(vector_index.vectorizer.vocabulary)} vocabulary features.")
 
-    if args.export_tts_chunks and tts_candidates:
+    if args.export_tts_chunks:
         chunks_dir = output_dir / "tts_chunks"
         chunks_dir.mkdir(parents=True, exist_ok=True)
         # Remove chunks from previous runs first. The directory is keyed by

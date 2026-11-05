@@ -157,15 +157,19 @@ NEGATOR_PATTERN = re.compile(
 )
 
 
-def _is_negated(text: str, match: str) -> bool:
-    """True if the first occurrence of ``match`` is directly negated.
+def _is_negated(text: str, match_or_offset: str | int, offset: int | None = None) -> bool:
+    """True if the match at ``offset`` (or first occurrence of string) is directly negated.
 
-    ``match`` comes from ``re.findall``, so it may be a group rather than the
-    whole match; search for it and inspect the preceding window.
+    Inspects the window immediately preceding the match offset for negators.
     """
-    if not match:
-        return False
-    idx = text.find(match.lower())
+    if isinstance(match_or_offset, int):
+        idx = match_or_offset
+    elif offset is not None:
+        idx = offset
+    else:
+        if not match_or_offset:
+            return False
+        idx = text.find(match_or_offset.lower())
     if idx <= 0:
         return False
     window = text[max(0, idx - 40):idx]
@@ -304,14 +308,12 @@ class StoryProfiler:
                 flagged_terms.append(tag_clean)
 
         for pat in UNDERAGE_INDICATORS:
-            matches = pat.findall(full_content)
-            if matches:
+            for match in pat.finditer(full_content):
                 # Drop matches that are directly negated ("he was not fifteen").
                 # Scoped narrowly to an immediately-preceding negator so it
                 # cannot suppress a genuine reference elsewhere in the text.
-                kept = [m for m in matches if not _is_negated(full_content, m)]
-                if kept:
-                    flagged_terms.extend(kept)
+                if not _is_negated(full_content, match.start()):
+                    flagged_terms.append(match.group())
 
         if flagged_terms:
             return SafetyAudit(

@@ -236,6 +236,21 @@ class TestSafetyFilterPrecision(unittest.TestCase):
             "he was not fifteen, but his brother was fourteen", [])
         self.assertEqual(audit.verdict, SafetyVerdict.FAIL_UNDERAGE_RISK)
 
+        # Same phrase repeated where only the first is negated
+        audit_same_phrase = StoryProfiler.audit_safety(
+            "he was not fifteen, but his brother was fifteen", [])
+        self.assertEqual(audit_same_phrase.verdict, SafetyVerdict.FAIL_UNDERAGE_RISK)
+
+        # First is genuine, second is negated
+        audit_first_genuine = StoryProfiler.audit_safety(
+            "his brother was fifteen, but he was not fifteen", [])
+        self.assertEqual(audit_first_genuine.verdict, SafetyVerdict.FAIL_UNDERAGE_RISK)
+
+        # Both negated
+        audit_both_negated = StoryProfiler.audit_safety(
+            "he was not fifteen, and his brother was not fifteen", [])
+        self.assertEqual(audit_both_negated.verdict, SafetyVerdict.PASS)
+
     def test_anonymiser_footer_is_stripped_before_screening(self):
         """The footer must not survive cleaning, or it reaches the screen."""
         raw = ("From: x@anon.penet.fi\n"
@@ -412,6 +427,28 @@ class TestTTSPrioritizer(unittest.TestCase):
             for name in remaining:
                 self.assertNotIn("safety_violation", name)
 
+    def test_export_prunes_stale_chunks_when_zero_candidates(self):
+        """When there are zero candidates, stale chunk files must still be pruned."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            chunks = out / "tts_chunks"
+            chunks.mkdir(parents=True)
+            (chunks / "9999_stale_chunks.json").write_text("[]")
+
+            buf = io.StringIO()
+            argv = sys.argv
+            sys.argv = ["cli", "--input", "samples/sample_stories.json",
+                        "--output-dir", str(out), "--export-tts-chunks",
+                        "--min-tts-score", "999.0"]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    cli_main()
+            finally:
+                sys.argv = argv
+
+            remaining = {p.name for p in chunks.glob("*_chunks.json")}
+            self.assertEqual(remaining, set())
+
 
 class TestVectorIndex(unittest.TestCase):
     def test_vectorizer_and_search(self):
@@ -469,6 +506,25 @@ class TestCSVLoading(unittest.TestCase):
             self.assertIn("athletics", stories[0].tags)
         finally:
             Path(temp_path).unlink(missing_ok=True)
+
+    def test_measure_safety_read_rows_supports_symlink(self):
+        from scripts.measure_safety import read_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            external_dir = Path(tmp) / "external"
+            external_dir.mkdir()
+            csv_file = external_dir / "stories.csv"
+            csv_file.write_text('id,title,text\n101,"Story 1","Hello world"\n')
+
+            symlink_dir = Path(tmp) / "project" / "data"
+            symlink_dir.mkdir(parents=True)
+            symlink_file = symlink_dir / "stories_clean.csv"
+            symlink_file.symlink_to(csv_file)
+
+            rows = list(read_rows(str(symlink_file)))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["id"], "101")
+            self.assertEqual(rows[0]["title"], "Story 1")
 
 
 if __name__ == "__main__":

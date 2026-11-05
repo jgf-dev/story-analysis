@@ -15,7 +15,6 @@ import argparse
 import csv
 import io
 import json
-import pathlib
 import re
 import sys
 from collections import Counter
@@ -42,15 +41,7 @@ ANONYMISER = re.compile(r"anon\.penet\.fi|report\s+inappropriate\s+use", re.IGNO
 
 def read_rows(csv_path: str, limit: int | None = None) -> Generator[dict[str, str], None, None]:
     """Yield dict rows safely using an RFC-quote-balanced reader."""
-    # Define a strict boundary directory (e.g., the current working directory or a dedicated data folder)
-    BASE_DIR = pathlib.Path().cwd()
-
-    # Resolve the target path safely
-    target_path = pathlib.Path(csv_path).resolve()
-
-    # Strict boundary check: Prevent escaping the base directory
-    if not target_path.is_relative_to(BASE_DIR):
-        raise PermissionError("Access denied: Path traversal attempt detected.")
+    target_path = Path(csv_path)
 
     # Ensure it's a file, not a directory or special device
     if not target_path.is_file():
