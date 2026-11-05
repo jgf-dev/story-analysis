@@ -24,3 +24,5 @@ data/output/
 data/stories_clean.csv
 data/logs/
 .pytest_cache/
+.ruff_cache/
+reindex_checkpoint.json
