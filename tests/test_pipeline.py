@@ -4,7 +4,6 @@ import unittest
 import json
 import contextlib
 import io
-import sys
 from pathlib import Path
 
 from pipeline.schemas import (
@@ -409,15 +408,9 @@ class TestTTSPrioritizer(unittest.TestCase):
             (chunks / "raw_story_005_safety_violation_chunks.json").write_text("[]")
 
             buf = io.StringIO()
-            # invoke via argv so argparse defaults apply
-            argv = sys.argv
-            sys.argv = ["cli", "--input", "samples/sample_stories.json",
-                        "--output-dir", str(out), "--export-tts-chunks"]
-            try:
-                with contextlib.redirect_stdout(buf):
-                    cli_main()
-            finally:
-                sys.argv = argv
+            with contextlib.redirect_stdout(buf):
+                cli_main(["--input", "samples/sample_stories.json",
+                          "--output-dir", str(out), "--export-tts-chunks"])
 
             remaining = {p.name for p in chunks.glob("*_chunks.json")}
             self.assertNotIn("9999_stale_chunks.json", remaining)
