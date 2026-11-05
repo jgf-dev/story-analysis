@@ -169,25 +169,6 @@ def main(argv: list[str] | None = None):
         print(f"Vector index built with {len(vector_index.items)} items and {len(vector_index.vectorizer.vocabulary)} vocabulary features.")
 
     if args.export_tts_chunks:
-        chunks_dir = output_dir / "tts_chunks"
-        chunks_dir.mkdir(parents=True, exist_ok=True)
-        # Remove chunks from previous runs first. The directory is keyed by
-        # story id and never pruned, so without this a run over a different
-        # input leaves stale files behind and the directory no longer matches
-        # the candidate queue it is supposed to represent.
-        written = {f"{cand.id}_chunks.json" for cand in tts_candidates}
-        removed = 0
-        for existing in chunks_dir.glob("*_chunks.json"):
-            if existing.name not in written:
-                existing.unlink()
-                removed += 1
-        if removed:
-            print(f"Removed {removed} stale chunk file(s) from a previous run.")
-        for cand in tts_candidates:
-            chunks = TTSPrioritizer.chunk_story_for_tts(cand.clean_text)
-            chunk_file = chunks_dir / f"{cand.id}_chunks.json"
-            with open(chunk_file, "w", encoding="utf-8") as f:
-                json.dump(chunks, f, indent=2)
         export_tts_chunks(output_dir, tts_candidates)
 
     # Print summary table
