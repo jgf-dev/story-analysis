@@ -1,8 +1,10 @@
 import faiss
 import numpy as np
+import pandas as pd
 
 print(faiss.get_num_gpus())
-data = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]], dtype=np.float32)
+df = pd.read_parquet("../data/test.parquet")
+data = np.vstack(df["embedding"]).astype(np.float32)
 
 dimension = data.shape[1]
 index = faiss.IndexFlatL2(dimension)
