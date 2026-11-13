@@ -1,0 +1,7 @@
+profile: main
+repository:
+  type: git
+  # url of the remote git repository to sync with, required
+  url: git@github.com:jgeofil/settings.git
+  # branch to sync on, optional (set to `master` by default)
+  branch: main

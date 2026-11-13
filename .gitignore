@@ -29,3 +29,5 @@ node_modules/
 reindex_checkpoint.json
 .mypy_cache
 .nogic
+data
+*.parquet
