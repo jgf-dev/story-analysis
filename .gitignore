@@ -27,3 +27,5 @@ data/logs/
 .ruff_cache/
 node_modules/
 reindex_checkpoint.json
+.mypy_cache
+.nogic
