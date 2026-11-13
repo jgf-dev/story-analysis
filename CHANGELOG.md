@@ -49,6 +49,12 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- `pipeline.cli.main()` now accepts an optional `argv: list[str] | None = None`
+  parameter so the CLI entry point can be tested or invoked programmatically
+  without modifying `sys.argv`.
+- `pipeline.cli.export_tts_chunks(output_dir, tts_candidates)` — extracted as a
+  dedicated helper from `main()` to handle exporting pre-segmented SSML audio
+  chunks for top TTS candidates and pruning stale outputs from previous runs.
 - **Safety verdicts are now three-tier.** `abuse`, `rape`, `murder`, `assault`
   and `suicide` moved out of `EXTREME_VIOLENCE_INDICATORS` into a new
   `MANUAL_REVIEW_INDICATORS` list, producing `FLAGGED_MANUAL_REVIEW` instead of
