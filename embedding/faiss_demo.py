@@ -1,6 +1,7 @@
 import faiss
 import numpy as np
 import pandas as pd
+import transformers
 
 print(faiss.get_num_gpus())
 df = pd.read_parquet("../data/test.parquet")
@@ -11,7 +12,7 @@ index = faiss.IndexFlatL2(dimension)
 
 index.add(data)
 
-query = np.array([[0, 0, 0]], dtype=np.float32)
+query = np.array([["0, 0, 0]"], dtype=np.float32)
 k = 2
 dist, idx = index.search(query, k)
 
