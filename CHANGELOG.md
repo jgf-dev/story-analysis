@@ -12,6 +12,19 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- **Production Faiss chunk search.** `embedding/search.py` streams the 1024-d
+  embeddings written by `embedding/get_chuncks.py` from `data/chunks/*.parquet`
+  into an exact cosine index (`faiss.IndexFlatIP` over L2-normalised vectors),
+  encodes plaintext queries with `jinaai/jina-embeddings-v5-text-small` and its
+  retrieval query prompt, and returns ranked `(story id, chunk index)` hits.
+  Peak build memory is one Parquet batch plus the ~4 GB index, so the ~1M-row
+  export is never loaded whole. `python -m embedding.search "..."` runs the
+  query path, and `--max-vectors` builds a partial index for smoke tests. The
+  model needs `torch`, `peft` and `pyarrow`, which are now declared in
+  `pyproject.toml` so a fresh `uv sync` can run the query path. Covered by
+  `tests/test_embedding_search.py`: shard streaming, schema and dimension
+  failures, cosine ranking, `max_vectors`, encoder validation, and the CLI's
+  missing-directory error. See `docs/INSIGHT_PLATFORM.md` for usage.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety
   verdict distribution plus the false-positive classes, so the effect of a rule
   change is measurable rather than asserted. Supports `--limit` and `--json`.

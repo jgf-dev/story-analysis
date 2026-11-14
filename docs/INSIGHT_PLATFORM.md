@@ -12,6 +12,7 @@ This platform is internal-only and runs locally.
 | Corpus prep | `insights/corpus_prep.py` | `data/catalog.sqlite` (deduped, tagged catalogue) |
 | Analysis | `insights/analysis.py` | `insights_output/analysis/analysis.json` |
 | Semantic embeddings + clusters | `insights/semantic.py` | `insights_output/vectors.npz`, `clusters.json`, `pipeline.pkl` |
+| Dense chunk search | `embedding/search.py` | in-memory Faiss cosine index; ranked chunk hits |
 | NER + combination search | `insights/ner.py` | `entity_mentions` table in the catalogue |
 | Internal UI + TTS audition | `insights/ui.py`, `insights/tts_audition.py` | local web app on `127.0.0.1:8765` |
 
@@ -159,6 +160,41 @@ top terms of the inverse-transformed centroid, with exemplar stories.
 ```bash
 python -m insights.semantic --db data/catalog.sqlite --out-dir insights_output --clusters 40
 ```
+
+## Dense chunk search (Faiss)
+
+`embedding/search.py` is the production query path over the 1024-d chunk
+embeddings exported by `embedding/get_chuncks.py` (the script name in the
+repository; the task brief calls it `get_chunks.py`). The export writes one
+`data/chunks/part-NN.parquet` shard per Elasticsearch slice with
+`(id, chunk_index, start_offset, end_offset, chunk_text, embedding)`.
+
+1. `iter_embedding_batches` streams each shard in record batches, so the ~1M
+   vectors (about 4 GB) are never loaded as one array. Peak build memory is one
+   batch plus the index.
+2. `ChunkVectorIndex` L2-normalises each batch and adds it to a Faiss
+   `IndexFlatIP`, making the score an exact cosine similarity. Flat search is
+   used because 1M vectors do not justify an approximate index or a training
+   step.
+3. `JinaQueryEncoder` downloads `jinaai/jina-embeddings-v5-text-small` on first
+   use (then reuses the Hugging Face cache) and encodes queries with
+   `task="retrieval"` and the model's `query` prompt. The model returns 1024-d
+   L2-normalised vectors, matching the export.
+4. `ChunkSearchEngine.search` encodes a plaintext query and returns ranked
+   `(story id, chunk index, cosine score)` hits. Chunk text is not duplicated
+   into the index; resolve it from the same Parquet shard or Elasticsearch.
+
+```bash
+python -m embedding.search "two rivals at summer camp" --top-k 10
+python -m embedding.search "a cabin weekend" --top-k 5 --max-vectors 50000 --json
+```
+
+The model requires `torch` and `peft` in addition to `transformers`. Inference
+uses CUDA when available (`--device cuda` to require it, `--device cpu` to force
+CPU) and `float32` on CPU, `bfloat16` on GPU; on CPU the loaded model itself
+needs roughly 2.7 GB on top of the index. `--threads` controls Faiss search
+threads; `--max-vectors` builds a partial index for a smoke test against the
+real export without reading every shard.
 
 ## NER combination search
 
