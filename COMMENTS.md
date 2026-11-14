@@ -1,5 +1,28 @@
 # Comments
 
+## 11/14/2026
+
+### Repository State Update
+
+The repository has been significantly expanded with new embedding and vector search capabilities:
+
+- **New `embedding/` directory**: Contains FAISS-based vector search implementation
+  - `data.py`: Test embedding vectors (1030 lines)
+  - `faiss_demo.py`: Demonstration script for FAISS search
+  - `get_chuncks.py`: Chunk extraction utilities
+  - `get_vectors.py`: Vector generation utilities
+  - `AGENTS.md`: Embedding-specific documentation
+- **New `samples/` directory**: Sample data for testing
+  - `sample_stories.json`: Sample stories
+  - `faiss_embedding_chunks_sample.jsonl`: 200 sample chunks with embeddings
+- **New `big-query/` directory**: Data exploration notebooks
+  - `data_exploration.ipynb`: BigQuery analysis notebook
+- **Updated `pyproject.toml`**: Now requires Python 3.14+ with FAISS, CUDA, and GPU dependencies
+- **Updated `CHANGELOG.md`**: Documents all recent changes including embedding additions
+
+The `embedding/` directory represents a major expansion of the project's capabilities, enabling
+semantic search and similarity matching across the story corpus using GPU-accelerated FAISS indexes.
+
 ## 10/20/2026
 
 [INGESTION_SPECIFICATION.md](docs/INGESTION_SPECIFICATION.md) 
