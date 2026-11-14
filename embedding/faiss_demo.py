@@ -1,18 +1,24 @@
+from typing import Any
+
 import faiss
 import numpy as np
 import pandas as pd
 import transformers
+from numpy._typing._nbit_base import _32Bit
+from pandas.core.frame import DataFrame
+
+from embedding.data import VECTOR_TEST
 
 print(faiss.get_num_gpus())
-df = pd.read_parquet("../data/test.parquet")
-data = np.vstack(df["embedding"]).astype(np.float32)
+df: DataFrame = pd.read_parquet("../data/test.parquet")
+data: np.ndarray[Any, np.dtype[np.floating[_32Bit]]] = np.vstack(df["embedding"]).astype(np.float32)
 
-dimension = data.shape[1]
-index = faiss.IndexFlatL2(dimension)
+dimension: int = data.shape[1]
+index: faiss.Index = faiss.IndexFlatL2(dimension)
 
 index.add(data)
 
-query = np.array([["0, 0, 0]"], dtype=np.float32)
+query: np.ndarray[Any, np.dtype[np.floating[_32Bit]]] = np.array(VECTOR_TEST, dtype=np.float32)
 k = 2
 dist, idx = index.search(query, k)
 
