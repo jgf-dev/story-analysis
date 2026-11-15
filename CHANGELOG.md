@@ -12,6 +12,9 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- `README.md` — comprehensive project documentation with repository structure, 
+  setup instructions, usage examples, and development guidelines. Provides a
+  single entry point for understanding the project.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety
   verdict distribution plus the false-positive classes, so the effect of a rule
   change is measurable rather than asserted. Supports `--limit` and `--json`.
@@ -49,6 +52,18 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- `AGENTS.md` — updated repository layout to include new `embedding/`, `samples/`,
+  and `big-query/` directories. Updated conventions to reflect Python 3.14+
+  requirement and added notes about FAISS indexes and vector data storage.
+- `COMMENTS.md` — added repository state update documenting the new embedding
+  and vector search capabilities, including `embedding/` directory contents,
+  sample data, BigQuery notebooks, and updated project configuration.
+- `pipeline.cli.main()` now accepts an optional `argv: list[str] | None = None`
+  parameter so the CLI entry point can be tested or invoked programmatically
+  without modifying `sys.argv`.
+- `pipeline.cli.export_tts_chunks(output_dir, tts_candidates)` — extracted as a
+  dedicated helper from `main()` to handle exporting pre-segmented SSML audio
+  chunks for top TTS candidates and pruning stale outputs from previous runs.
 - **Safety verdicts are now three-tier.** `abuse`, `rape`, `murder`, `assault`
   and `suicide` moved out of `EXTREME_VIOLENCE_INDICATORS` into a new
   `MANUAL_REVIEW_INDICATORS` list, producing `FLAGGED_MANUAL_REVIEW` instead of

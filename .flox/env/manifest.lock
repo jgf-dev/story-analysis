@@ -1,0 +1,405 @@
+{
+  "lockfile-version": 1,
+  "manifest": {
+    "schema-version": "1.19.0",
+    "install": {
+      "elasticsearch": {
+        "pkg-path": "python314Packages.elasticsearch"
+      },
+      "faiss": {
+        "pkg-path": "flox-cuda/faiss",
+        "pkg-group": "faiss"
+      },
+      "flox-mcp-server": {
+        "pkg-path": "flox/flox-mcp-server",
+        "pkg-group": "flox-mcp-server"
+      },
+      "nodejs": {
+        "pkg-path": "nodejs"
+      },
+      "numpy": {
+        "pkg-path": "flox-cuda/python3Packages.numpy",
+        "pkg-group": "numpy"
+      },
+      "pandas": {
+        "pkg-path": "python314Packages.pandas"
+      },
+      "pip": {
+        "pkg-path": "python314Packages.pip"
+      },
+      "pyarrow": {
+        "pkg-path": "python314Packages.pyarrow"
+      },
+      "python3": {
+        "pkg-path": "python3",
+        "version": ">=3.14.*"
+      },
+      "transformers": {
+        "pkg-path": "flox-cuda/python3Packages.transformers",
+        "pkg-group": "transformers"
+      },
+      "uv": {
+        "pkg-path": "uv"
+      }
+    },
+    "vars": {
+      "ES_URL": "https://stories-ec0351.es.us-east4.gcp.elastic.cloud:443"
+    },
+    "hook": {
+      "on-activate": "  npm install\n\n  export PYTHON_DIR=\"$FLOX_ENV_PROJECT/.venv\"\n  if [ ! -d \"$PYTHON_DIR\" ]; then\n    echo \"Creating python virtual environment in $PYTHON_DIR\"\n    uv venv \"$PYTHON_DIR\"\n  fi\n\n  (\n    source \"$PYTHON_DIR/bin/activate\"\n    uv sync\n  )\n\n"
+    },
+    "profile": {
+      "bash": "  echo \"Activating python virtual environment\" >&2\n  source \"$PYTHON_DIR/bin/activate\"\n"
+    },
+    "options": {
+      "systems": [
+        "x86_64-linux"
+      ],
+      "cuda-detection": true
+    }
+  },
+  "packages": [
+    {
+      "attr_path": "faiss",
+      "broken": false,
+      "derivation": "/nix/store/m9ydfh4vl64l87bn9i3g0pg5k1frazq9-faiss-1.16.0.drv",
+      "description": "Library for efficient similarity search and clustering of dense vectors by Facebook Research",
+      "install_id": "faiss",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "faiss-1.16.0",
+      "pname": "faissWithCuda",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T17:46:27.696777429Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "faiss-1.16.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/xa0l3mj33n1dcp57fr92vw3v06b0zq2s-faiss-1.16.0-dist",
+        "out": "/nix/store/08zvs30xdcc1spy14d1dh21kr03ff588-faiss-1.16.0"
+      },
+      "system": "x86_64-linux",
+      "group": "faiss",
+      "priority": 5
+    },
+    {
+      "attr_path": "flox-mcp-server",
+      "broken": false,
+      "derivation": "/nix/store/rf04dhnll2q5aiqkc5pyw34cgvi7z613-flox-mcp-server-0.2.2.drv",
+      "description": "MCP server for Flox package manager",
+      "install_id": "flox-mcp-server",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/mcp-server?rev=97aa112badd2c6ac25d70229088a1a3317463725",
+      "name": "flox-mcp-server-0.2.2",
+      "pname": "flox-mcp-server",
+      "rev": "97aa112badd2c6ac25d70229088a1a3317463725",
+      "rev_count": 37,
+      "rev_date": "2026-08-19T14:52:11Z",
+      "scrape_date": "2026-11-13T17:46:27.696785866Z",
+      "stabilities": [
+        "staging",
+        "unstable",
+        "stable"
+      ],
+      "unfree": false,
+      "version": "0.2.2",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/7n1lgkxly8yyf51jlv3wnx0swksa18xa-flox-mcp-server-0.2.2-dist",
+        "out": "/nix/store/cxc72y42r7crkk9v650r601ibcxydxkl-flox-mcp-server-0.2.2"
+      },
+      "system": "x86_64-linux",
+      "group": "flox-mcp-server",
+      "priority": 5
+    },
+    {
+      "attr_path": "python3Packages.numpy",
+      "broken": false,
+      "derivation": "/nix/store/r3rs024hd0r3kn3vbczvqjil01fasvv7-python3.14-numpy-2.5.4.drv",
+      "description": "Scientific tools for Python",
+      "install_id": "numpy",
+      "license": "BSD-3-Clause",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=f4a03c008967841f2a0b3cb7c436fc6fc31671f6",
+      "name": "python3.14-numpy-2.5.4",
+      "pname": "numpy",
+      "rev": "f4a03c008967841f2a0b3cb7c436fc6fc31671f6",
+      "rev_count": 1113206,
+      "rev_date": "2026-11-07T09:04:50Z",
+      "scrape_date": "2026-11-13T17:46:27.696787239Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "2.5.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/hiybgz218ghc1qighg9x1ryp5h8qharr-python3.14-numpy-2.5.4-dist",
+        "out": "/nix/store/pbaghawc5fpv615wfa0l8rdiq2z9f040-python3.14-numpy-2.5.4"
+      },
+      "system": "x86_64-linux",
+      "group": "numpy",
+      "priority": 5
+    },
+    {
+      "attr_path": "python314Packages.elasticsearch",
+      "broken": false,
+      "derivation": "/nix/store/3i2dqw1h6rzqnqs82cv3pjqfkb3jmjdl-python3.14-elasticsearch-8.19.3.drv",
+      "description": "Official low-level client for Elasticsearch",
+      "install_id": "elasticsearch",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "python3.14-elasticsearch-8.19.3",
+      "pname": "elasticsearch",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.615195Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "8.19.3",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/9fzlppg0arp7p8yy1j1k584lk9pr8x4s-python3.14-elasticsearch-8.19.3-dist",
+        "out": "/nix/store/ng35vfq981g2vg7z4bm8adjslfi2k6z5-python3.14-elasticsearch-8.19.3"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "nodejs",
+      "broken": false,
+      "derivation": "/nix/store/my4m3k693hpr9cf87fnlidwqc84z1vvj-nodejs-24.22.2.drv",
+      "description": "Event-driven I/O framework for the V8 JavaScript engine",
+      "install_id": "nodejs",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "nodejs-24.22.2",
+      "pname": "nodejs",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.514434Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.22.2",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/3kfmdqn711fqcc2y1qnjssancqf7b36l-nodejs-24.22.2"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "python314Packages.pandas",
+      "broken": false,
+      "derivation": "/nix/store/1p0lhvyr9j7d6pibrkcvdv7lm018ysjw-python3.14-pandas-3.0.4.drv",
+      "description": "Powerful data structures for data analysis, time series, and statistics",
+      "install_id": "pandas",
+      "license": "BSD-3-Clause",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "python3.14-pandas-3.0.4",
+      "pname": "pandas",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.629246Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "3.0.4",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/p3rkaz9rvhkwn9a7v05bvrb7wihidinx-python3.14-pandas-3.0.4-dist",
+        "out": "/nix/store/8qhbmz4m1bhfnph1281fpvg2i80rqv9i-python3.14-pandas-3.0.4"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "python314Packages.pip",
+      "broken": false,
+      "derivation": "/nix/store/719k3vvlhb8xb13nh1i9hmcsb9zzf6jb-python3.14-pip-26.2.2.drv",
+      "description": "PyPA recommended tool for installing Python packages",
+      "install_id": "pip",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "python3.14-pip-26.2.2",
+      "pname": "pip",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.630101Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "26.2.2",
+      "outputs_to_install": [
+        "man",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/zgzgb7wb1zx646qdqx17nlhyabnxmj09-python3.14-pip-26.2.2-dist",
+        "man": "/nix/store/sxqs00mnrd17qdax9m58w0p73vjnxnl7-python3.14-pip-26.2.2-man",
+        "out": "/nix/store/yvfdfmfx2896xbdk0bprdbsb0gp56mpi-python3.14-pip-26.2.2"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "python314Packages.pyarrow",
+      "broken": false,
+      "derivation": "/nix/store/0nng3kzr9hrp2zy832wb4z5d869l3rgg-python3.14-pyarrow-24.0.0.drv",
+      "description": "Cross-language development platform for in-memory data",
+      "install_id": "pyarrow",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "python3.14-pyarrow-24.0.0",
+      "pname": "pyarrow",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.631621Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.0.0",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/hbfkgldscwaq6fmvc3gp40k0wpakxy48-python3.14-pyarrow-24.0.0-dist",
+        "out": "/nix/store/d05wnnww46rm20cwivc6vf69d016bwsp-python3.14-pyarrow-24.0.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "python3",
+      "broken": false,
+      "derivation": "/nix/store/y1k1zfpizwmhv944zzan7rx322ry2vcw-python3-3.14.10.drv",
+      "description": "High-level dynamically-typed programming language",
+      "install_id": "python3",
+      "license": "Python-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "python3-3.14.10",
+      "pname": "python3",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.559594Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "3.14.10",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "debug": "/nix/store/9gm28616byzvask3v2rima0ci54dv5d1-python3-3.14.10-debug",
+        "out": "/nix/store/bya4ansy58az5133kryqp2cvrxbnz8qy-python3-3.14.10"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "uv",
+      "broken": false,
+      "derivation": "/nix/store/6shyz8kv0a3bpvq7yba4zl8b2lff6amn-uv-0.13.7.drv",
+      "description": "Extremely fast Python package installer and resolver, written in Rust",
+      "install_id": "uv",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "name": "uv-0.13.7",
+      "pname": "uv",
+      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "rev_count": 1117658,
+      "rev_date": "2026-11-11T08:42:49Z",
+      "scrape_date": "2026-11-13T06:52:55.749615Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.13.7",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/9nvvwcmpp4vg28biqg9jhrlnvijwilwj-uv-0.13.7"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "python3Packages.transformers",
+      "broken": false,
+      "derivation": "/nix/store/pdcs128aql6ppsq90vf2zxgpkplxnsyv-python3.14-transformers-5.17.0.drv",
+      "description": "Natural Language Processing for TensorFlow 2.0 and PyTorch",
+      "install_id": "transformers",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=02c087f3fe673c9e317f206a627cb6b910336dbe",
+      "name": "python3.14-transformers-5.17.0",
+      "pname": "transformers",
+      "rev": "02c087f3fe673c9e317f206a627cb6b910336dbe",
+      "rev_count": 1097682,
+      "rev_date": "2026-10-20T13:28:04Z",
+      "scrape_date": "2026-11-13T18:17:33.363835389Z",
+      "stabilities": [
+        "unstable",
+        "staging"
+      ],
+      "unfree": false,
+      "version": "5.17.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "dist": "/nix/store/70myjj1y1m080cc31rrqgy9gknl3xlxq-python3.14-transformers-5.17.0-dist",
+        "out": "/nix/store/s7kr8s904k4pb55jpga01a0siz892nva-python3.14-transformers-5.17.0"
+      },
+      "system": "x86_64-linux",
+      "group": "transformers",
+      "priority": 5
+    }
+  ]
+}
