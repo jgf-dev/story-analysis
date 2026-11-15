@@ -17,6 +17,12 @@ Run it with::
 
     python -m embedding.search "a first time story at summer camp" --top-k 10
 
+``samples/faiss_embedding_chunks_sample.jsonl`` is a 200-chunk export that has
+chunk text but no vectors. ``--sample`` reads it through
+:func:`iter_sample_chunks` and encodes each chunk with the model's ``document``
+prompt, which matches the ``semantic_text`` field defaults used to build the
+live Elasticsearch index, before searching it the same way.
+
 The first run downloads the Jina model into the Hugging Face cache. Chunk text
 is deliberately not copied into the index; resolve it from the Parquet shard or
 Elasticsearch using ``(story_id, chunk_index)``.
@@ -40,14 +46,17 @@ import pyarrow.parquet as pq
 EMBEDDING_DIM = 1024
 DEFAULT_MODEL = "jinaai/jina-embeddings-v5-text-small"
 DEFAULT_PARQUET_DIR = Path("data/chunks")
+DEFAULT_SAMPLE_PATH = Path("samples/faiss_embedding_chunks_sample.jsonl")
 DEFAULT_BATCH_SIZE = 8192
+DEFAULT_ENCODE_BATCH_SIZE = 4
 REQUIRED_COLUMNS = ("id", "chunk_index", "embedding")
+SAMPLE_ID_COLUMN = "id"
+SAMPLE_TEXT_COLUMN = "content"
 TASKS = ("retrieval", "text-matching", "clustering", "classification")
-PROMPT_NAMES = ("query", "document")
 
 
 class EmbeddingDataError(ValueError):
-    """Raised when a Parquet shard does not match the chunk-embedding schema."""
+    """Raised when a Parquet shard or JSONL sample does not match its schema."""
 
 
 @dataclass(frozen=True)
@@ -57,6 +66,15 @@ class EmbeddingBatch:
     ids: np.ndarray
     chunk_indices: np.ndarray
     vectors: np.ndarray
+
+
+@dataclass(frozen=True)
+class ChunkTextBatch:
+    """One batch of story ids, chunk positions, and raw chunk text."""
+
+    ids: np.ndarray
+    chunk_indices: np.ndarray
+    texts: list[str]
 
 
 @dataclass(frozen=True)
@@ -146,6 +164,78 @@ def iter_embedding_batches(
             yield EmbeddingBatch(ids=ids, chunk_indices=chunk_indices, vectors=vectors)
 
 
+def iter_sample_chunks(
+    path: str | Path = DEFAULT_SAMPLE_PATH,
+    *,
+    batch_size: int = DEFAULT_ENCODE_BATCH_SIZE,
+) -> Iterator[ChunkTextBatch]:
+    """Stream story chunks from a JSONL export such as the committed sample.
+
+    Each line is one Elasticsearch hit: ``id`` is the story id and ``content``
+    is the chunk text. The sample has one row per story, but a repeated id is
+    numbered in file order so ``(id, chunk_index)`` stays unique.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    sample = Path(path)
+    if not sample.is_file():
+        raise FileNotFoundError(f"sample file does not exist: {sample}")
+
+    ids: list[int] = []
+    chunk_indices: list[int] = []
+    texts: list[str] = []
+    next_index: dict[int, int] = {}
+
+    with sample.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise EmbeddingDataError(
+                    f"{sample}:{line_number}: invalid JSON: {exc.msg}"
+                ) from exc
+            if not isinstance(row, dict):
+                raise EmbeddingDataError(
+                    f"{sample}:{line_number}: expected a JSON object"
+                )
+
+            story_id = row.get(SAMPLE_ID_COLUMN)
+            text = row.get(SAMPLE_TEXT_COLUMN)
+            if not isinstance(story_id, int) or isinstance(story_id, bool):
+                raise EmbeddingDataError(
+                    f"{sample}:{line_number}: '{SAMPLE_ID_COLUMN}' must be an integer"
+                )
+            if not isinstance(text, str) or not text.strip():
+                raise EmbeddingDataError(
+                    f"{sample}:{line_number}: '{SAMPLE_TEXT_COLUMN}' must be a "
+                    "non-empty string"
+                )
+
+            chunk_index = next_index.get(story_id, 0)
+            next_index[story_id] = chunk_index + 1
+            ids.append(story_id)
+            chunk_indices.append(chunk_index)
+            texts.append(text)
+
+            if len(ids) >= batch_size:
+                yield ChunkTextBatch(
+                    ids=np.asarray(ids, dtype=np.int64),
+                    chunk_indices=np.asarray(chunk_indices, dtype=np.int32),
+                    texts=texts,
+                )
+                ids, chunk_indices, texts = [], [], []
+
+    if ids:
+        yield ChunkTextBatch(
+            ids=np.asarray(ids, dtype=np.int64),
+            chunk_indices=np.asarray(chunk_indices, dtype=np.int32),
+            texts=texts,
+        )
+
+
 class ChunkVectorIndex:
     """Exact cosine-similarity index over chunk embeddings.
 
@@ -191,24 +281,72 @@ class ChunkVectorIndex:
         for batch in iter_embedding_batches(
             parquet_dir, batch_size=batch_size, dimension=dimension
         ):
-            if max_vectors is not None:
-                remaining = max_vectors - index.size
-                if remaining <= 0:
-                    break
-                if len(batch.ids) > remaining:
-                    index.add(
-                        batch.ids[:remaining],
-                        batch.chunk_indices[:remaining],
-                        batch.vectors[:remaining],
-                    )
-                    break
-            index.add(batch.ids, batch.chunk_indices, batch.vectors)
-            if max_vectors is not None and index.size >= max_vectors:
+            if index._add_batch(
+                batch.ids, batch.chunk_indices, batch.vectors, max_vectors
+            ):
                 break
 
         if index.size == 0:
             raise EmbeddingDataError(f"no embeddings found in {Path(parquet_dir)}")
         return index
+
+    @classmethod
+    def from_sample(
+        cls,
+        sample_path: str | Path = DEFAULT_SAMPLE_PATH,
+        *,
+        encoder: JinaTextEncoder,
+        batch_size: int = DEFAULT_ENCODE_BATCH_SIZE,
+        max_vectors: int | None = None,
+    ) -> ChunkVectorIndex:
+        """Build the index from a JSONL chunk sample, encoding its text locally.
+
+        The sample rows carry chunk text but no vectors, so every chunk is
+        encoded with the model's document prompt. ``max_vectors`` limits how
+        many chunks are read and encoded, which keeps smoke tests fast.
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if max_vectors is not None and max_vectors <= 0:
+            raise ValueError("max_vectors must be positive")
+
+        index = cls(encoder.dimension)
+        for batch in iter_sample_chunks(sample_path, batch_size=batch_size):
+            if max_vectors is not None and index.size >= max_vectors:
+                break
+            count = len(batch.ids)
+            if max_vectors is not None:
+                count = min(count, max_vectors - index.size)
+            vectors = encoder.encode_documents(batch.texts[:count])
+            index.add(batch.ids[:count], batch.chunk_indices[:count], vectors)
+            if max_vectors is not None and index.size >= max_vectors:
+                break
+
+        if index.size == 0:
+            raise EmbeddingDataError(f"no chunks found in {Path(sample_path)}")
+        return index
+
+    def _add_batch(
+        self,
+        ids: np.ndarray,
+        chunk_indices: np.ndarray,
+        vectors: np.ndarray,
+        max_vectors: int | None,
+    ) -> bool:
+        """Add one batch, honouring ``max_vectors``; return True at the limit."""
+        if max_vectors is not None:
+            remaining = max_vectors - self.size
+            if remaining <= 0:
+                return True
+            if len(ids) > remaining:
+                self.add(
+                    ids[:remaining],
+                    chunk_indices[:remaining],
+                    vectors[:remaining],
+                )
+                return True
+        self.add(ids, chunk_indices, vectors)
+        return max_vectors is not None and self.size >= max_vectors
 
     def add(
         self, ids: np.ndarray, chunk_indices: np.ndarray, vectors: np.ndarray
@@ -282,13 +420,15 @@ class ChunkVectorIndex:
         return hits
 
 
-class JinaQueryEncoder:
-    """Encode plaintext queries with the Jina v5 retrieval adapter.
+class JinaTextEncoder:
+    """Encode queries and documents with the Jina v5 retrieval adapter.
 
     ``AutoModel.from_pretrained`` downloads the model and its task adapters on
-    first use and reuses the Hugging Face cache afterwards. The model's
-    ``encode`` prepends the query prompt and L2-normalises its output, so query
-    vectors live in the same cosine space as the indexed chunk vectors.
+    first use and reuses the Hugging Face cache afterwards. Documents are
+    encoded with the model's ``document`` prompt and queries with its ``query``
+    prompt, which is how Elasticsearch's ``semantic_text`` field uses the model
+    by default. The model L2-normalises its output, so both live in the same
+    cosine space as the indexed chunk vectors.
     """
 
     def __init__(
@@ -297,22 +437,24 @@ class JinaQueryEncoder:
         *,
         device: str | None = None,
         task: str = "retrieval",
-        prompt_name: str = "query",
         dimension: int = EMBEDDING_DIM,
+        encode_batch_size: int = DEFAULT_ENCODE_BATCH_SIZE,
+        max_length: int | None = None,
     ) -> None:
         if task not in TASKS:
             raise ValueError(f"task must be one of {TASKS}, got {task!r}")
-        if prompt_name not in PROMPT_NAMES:
-            raise ValueError(
-                f"prompt_name must be one of {PROMPT_NAMES}, got {prompt_name!r}"
-            )
         if dimension <= 0:
             raise ValueError("dimension must be positive")
+        if encode_batch_size <= 0:
+            raise ValueError("encode_batch_size must be positive")
+        if max_length is not None and max_length <= 0:
+            raise ValueError("max_length must be positive")
         self.model_name = model_name
         self.device = device
         self.task = task
-        self.prompt_name = prompt_name
         self.dimension = dimension
+        self.encode_batch_size = encode_batch_size
+        self.max_length = max_length
         self._model: Any | None = None
 
     def _load(self) -> Any:
@@ -336,33 +478,56 @@ class JinaQueryEncoder:
         self.device = str(device)
         return self._model
 
-    def encode(self, query: str) -> np.ndarray:
+    def encode_query(self, query: str) -> np.ndarray:
+        """Encode one plaintext query with the retrieval ``query`` prompt."""
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string")
+        return self._encode([query], prompt_name="query")[0]
 
-        model = self._model if self._model is not None else self._load()
-        embeddings = model.encode(
-            texts=[query], task=self.task, prompt_name=self.prompt_name
-        )
-        if len(embeddings) != 1:
-            raise RuntimeError(
-                f"{self.model_name} returned {len(embeddings)} embeddings for one query"
+    def encode_documents(self, documents: Sequence[str]) -> np.ndarray:
+        """Encode chunk text with the retrieval ``document`` prompt."""
+        texts = list(documents)
+        if not texts:
+            raise ValueError("documents must not be empty")
+        if any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise ValueError("documents must be non-empty strings")
+
+        batches = [
+            self._encode(
+                texts[start : start + self.encode_batch_size],
+                prompt_name="document",
             )
-        vector = np.asarray(
-            embeddings[0].detach().float().cpu().numpy(), dtype=np.float32
-        ).reshape(-1)
-        if vector.shape[0] != self.dimension:
+            for start in range(0, len(texts), self.encode_batch_size)
+        ]
+        return np.vstack(batches)
+
+    def _encode(self, texts: list[str], *, prompt_name: str) -> np.ndarray:
+        model = self._model if self._model is not None else self._load()
+        kwargs: dict[str, Any] = {
+            "texts": texts,
+            "task": self.task,
+            "prompt_name": prompt_name,
+        }
+        if self.max_length is not None:
+            kwargs["max_length"] = self.max_length
+        embeddings = model.encode(**kwargs)
+        array = np.asarray(embeddings.detach().float().cpu().numpy(), dtype=np.float32)
+        if array.ndim != 2 or array.shape[0] != len(texts):
+            raise RuntimeError(
+                f"{self.model_name} returned {array.shape} for {len(texts)} texts"
+            )
+        if array.shape[1] != self.dimension:
             raise ValueError(
-                f"{self.model_name} returned {vector.shape[0]} dimensions, "
+                f"{self.model_name} returned {array.shape[1]} dimensions, "
                 f"expected {self.dimension}"
             )
-        return np.ascontiguousarray(vector)
+        return np.ascontiguousarray(array)
 
 
 class ChunkSearchEngine:
     """Plaintext query -> Jina query vector -> ranked Faiss chunk hits."""
 
-    def __init__(self, index: ChunkVectorIndex, encoder: JinaQueryEncoder) -> None:
+    def __init__(self, index: ChunkVectorIndex, encoder: JinaTextEncoder) -> None:
         if index.dimension != encoder.dimension:
             raise ValueError(
                 f"index dimension {index.dimension} does not match "
@@ -378,27 +543,55 @@ class ChunkSearchEngine:
         *,
         batch_size: int = DEFAULT_BATCH_SIZE,
         max_vectors: int | None = None,
-        encoder: JinaQueryEncoder | None = None,
+        encoder: JinaTextEncoder | None = None,
         model_name: str = DEFAULT_MODEL,
         device: str | None = None,
         task: str = "retrieval",
-        prompt_name: str = "query",
     ) -> ChunkSearchEngine:
         index = ChunkVectorIndex.from_parquet(
             parquet_dir, batch_size=batch_size, max_vectors=max_vectors
         )
         if encoder is None:
-            encoder = JinaQueryEncoder(
+            encoder = JinaTextEncoder(
                 model_name,
                 device=device,
                 task=task,
-                prompt_name=prompt_name,
                 dimension=index.dimension,
             )
         return cls(index, encoder)
 
+    @classmethod
+    def from_sample(
+        cls,
+        sample_path: str | Path = DEFAULT_SAMPLE_PATH,
+        *,
+        batch_size: int = DEFAULT_ENCODE_BATCH_SIZE,
+        max_vectors: int | None = None,
+        encoder: JinaTextEncoder | None = None,
+        model_name: str = DEFAULT_MODEL,
+        device: str | None = None,
+        task: str = "retrieval",
+        max_length: int | None = None,
+    ) -> ChunkSearchEngine:
+        """Build an index from a JSONL chunk sample by encoding its text."""
+        if encoder is None:
+            encoder = JinaTextEncoder(
+                model_name,
+                device=device,
+                task=task,
+                encode_batch_size=batch_size,
+                max_length=max_length,
+            )
+        index = ChunkVectorIndex.from_sample(
+            sample_path,
+            encoder=encoder,
+            batch_size=batch_size,
+            max_vectors=max_vectors,
+        )
+        return cls(index, encoder)
+
     def search(self, query: str, top_k: int = 10) -> list[SearchHit]:
-        return self.index.search(self.encoder.encode(query), top_k=top_k)
+        return self.index.search(self.encoder.encode_query(query), top_k=top_k)
 
 
 def _positive_int(value: str) -> int:
@@ -413,11 +606,20 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Search story chunk embeddings with Faiss and Jina v5."
     )
     parser.add_argument("queries", nargs="+", help="plaintext query string(s)")
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--parquet-dir",
         type=Path,
         default=DEFAULT_PARQUET_DIR,
         help=f"directory of get_chuncks.py shards (default: {DEFAULT_PARQUET_DIR})",
+    )
+    source.add_argument(
+        "--sample",
+        action="store_true",
+        help=(
+            f"build from {DEFAULT_SAMPLE_PATH} and encode its chunk text "
+            "locally with the document prompt"
+        ),
     )
     parser.add_argument("--top-k", type=_positive_int, default=10)
     parser.add_argument(
@@ -425,6 +627,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=DEFAULT_BATCH_SIZE,
         help="Parquet rows read per batch while building the index",
+    )
+    parser.add_argument(
+        "--encode-batch-size",
+        type=_positive_int,
+        default=DEFAULT_ENCODE_BATCH_SIZE,
+        help="sample chunks encoded per model call",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=_positive_int,
+        default=None,
+        help="token limit for local sample encoding (default: model maximum)",
     )
     parser.add_argument(
         "--max-vectors",
@@ -437,7 +651,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--device", default=None, help="torch device (default: auto: cuda, else cpu)"
     )
     parser.add_argument("--task", choices=TASKS, default="retrieval")
-    parser.add_argument("--prompt-name", choices=PROMPT_NAMES, default="query")
     parser.add_argument(
         "--threads", type=_positive_int, default=None, help="Faiss CPU thread count"
     )
@@ -453,21 +666,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         faiss.omp_set_num_threads(args.threads)
 
     try:
-        engine = ChunkSearchEngine.from_parquet(
-            args.parquet_dir,
-            batch_size=args.batch_size,
-            max_vectors=args.max_vectors,
-            model_name=args.model,
-            device=args.device,
-            task=args.task,
-            prompt_name=args.prompt_name,
-        )
+        if args.sample:
+            engine = ChunkSearchEngine.from_sample(
+                batch_size=args.encode_batch_size,
+                max_vectors=args.max_vectors,
+                model_name=args.model,
+                device=args.device,
+                task=args.task,
+                max_length=args.max_length,
+            )
+            source_name = DEFAULT_SAMPLE_PATH
+        else:
+            engine = ChunkSearchEngine.from_parquet(
+                args.parquet_dir,
+                batch_size=args.batch_size,
+                max_vectors=args.max_vectors,
+                model_name=args.model,
+                device=args.device,
+                task=args.task,
+            )
+            source_name = args.parquet_dir
     except (FileNotFoundError, EmbeddingDataError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(
-        f"Indexed {engine.index.size:,} chunk vectors from {args.parquet_dir}",
+        f"Indexed {engine.index.size:,} chunk vectors from {source_name}",
         file=sys.stderr,
     )
     results = [

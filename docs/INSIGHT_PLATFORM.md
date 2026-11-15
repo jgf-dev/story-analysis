@@ -176,10 +176,13 @@ repository; the task brief calls it `get_chunks.py`). The export writes one
    `IndexFlatIP`, making the score an exact cosine similarity. Flat search is
    used because 1M vectors do not justify an approximate index or a training
    step.
-3. `JinaQueryEncoder` downloads `jinaai/jina-embeddings-v5-text-small` on first
-   use (then reuses the Hugging Face cache) and encodes queries with
-   `task="retrieval"` and the model's `query` prompt. The model returns 1024-d
-   L2-normalised vectors, matching the export.
+3. `JinaTextEncoder` downloads `jinaai/jina-embeddings-v5-text-small` on first
+   use (then reuses the Hugging Face cache). Queries are encoded with
+   `task="retrieval"` and the model's `query` prompt; document text is encoded
+   with the same task and the `document` prompt. Those are the defaults the
+   `semantic_text` field uses for the Jina v5 models, so locally encoded
+   vectors match the vectors Elasticsearch produced for the live index. The
+   model returns 1024-d L2-normalised vectors, matching the export.
 4. `ChunkSearchEngine.search` encodes a plaintext query and returns ranked
    `(story id, chunk index, cosine score)` hits. Chunk text is not duplicated
    into the index; resolve it from the same Parquet shard or Elasticsearch.
@@ -189,12 +192,25 @@ python -m embedding.search "two rivals at summer camp" --top-k 10
 python -m embedding.search "a cabin weekend" --top-k 5 --max-vectors 50000 --json
 ```
 
+`samples/faiss_embedding_chunks_sample.jsonl` holds 200 chunks as JSONL
+(`id`, `content`) without vectors. `--sample` reads it, encodes each chunk with
+`iter_sample_chunks` + the document prompt, and searches the same index:
+
+```bash
+# Truncate to 128 tokens to keep the CPU smoke test near two minutes
+python -m embedding.search --sample --max-length 128 --encode-batch-size 4 \
+  "a first time story at summer camp" --top-k 5
+```
+
 The model requires `torch` and `peft` in addition to `transformers`. Inference
 uses CUDA when available (`--device cuda` to require it, `--device cpu` to force
 CPU) and `float32` on CPU, `bfloat16` on GPU; on CPU the loaded model itself
 needs roughly 2.7 GB on top of the index. `--threads` controls Faiss search
 threads; `--max-vectors` builds a partial index for a smoke test against the
-real export without reading every shard.
+real export without reading every shard. On the `--sample` path,
+`--encode-batch-size` sets how many chunks go through the model per call and
+`--max-length` truncates long chunks; omit it to use the model's full 32K-token
+context.
 
 ## NER combination search
 

@@ -70,15 +70,18 @@ Before reporting a change as complete:
 | --- | --- |
 | `pipeline/` | Per-story processing: cleaning, safety audit, metrics, quality scoring, taxonomy, dedup, TTS preparation. |
 | `insights/` | Full-corpus platform: streaming ingestion, analysis, semantic search, NER, internal UI. |
+| `embedding/` | Vector embeddings and FAISS-based similarity search. Contains test data, demo scripts, and chunk utilities. |
 | `parse/` | Document parsing via the `unstructured-transform-client` API. |
+| `scripts/` | Operational wrapper scripts. |
 | `tests/` | Test suite (`pytest`). |
 | `docs/` | Specifications and platform documentation. |
-| `scripts/` | Operational wrapper scripts. |
+| `samples/` | Sample data files for testing and development. |
+| `big-query/` | BigQuery data exploration notebooks. |
 | `types/` | Type stubs mirroring the source tree. |
 
 ## Conventions
 
-- Python 3.12, `from __future__ import annotations` at the top of modules.
+- Python 3.14+ (as specified in `pyproject.toml`), `from __future__ import annotations` at the top of modules.
 - Prefer PEP 585/604 annotations (`list[str]`, `int | None`) in new code.
 - **Compile regexes at module scope.** A malformed pattern then fails at import.
   Compiled inside a function, the error is raised per row, absorbed by the
@@ -87,8 +90,10 @@ Before reporting a change as complete:
 - Long-running batch jobs must fail loudly. Never let a run exit 0 when work was
   skipped — see `insights/corpus_prep.py` for the pattern (non-zero exit,
   checkpoint held, distinct failure types reported).
-- Do not commit dataset artifacts. `data/output/`, `data/raw/`, and `*.sqlite*`
-  are gitignored; the corpus is internal and must not leave the machine.
+- Do not commit dataset artifacts. `data/output/`, `data/raw/`, `*.sqlite*`,
+  `data/logs/`, and `*.parquet` files are gitignored; the corpus is internal
+  and must not leave the machine.
+- FAISS indexes and vector data belong in `data/vectors/` (gitignored).
 
 ## Notes
 
@@ -97,3 +102,8 @@ Before reporting a change as complete:
 - `docs/INGESTION_SPECIFICATION.md` describes the original 300K-story pipeline
   design. Where it disagrees with the code, the code is authoritative — note the
   discrepancy in the changelog rather than silently following the spec.
+- `docs/INSIGHT_PLATFORM.md` documents the streaming ingestion, failure handling,
+  and safety screening architecture.
+- `embedding/AGENTS.md` contains embedding-specific notes and sample data information.
+- The `embedding/` directory is new as of November 2026 and contains FAISS-based
+  vector search capabilities with GPU support.

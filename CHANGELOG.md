@@ -25,6 +25,20 @@ Entries are grouped by the change types defined in Keep a Changelog:
   `tests/test_embedding_search.py`: shard streaming, schema and dimension
   failures, cosine ranking, `max_vectors`, encoder validation, and the CLI's
   missing-directory error. See `docs/INSIGHT_PLATFORM.md` for usage.
+- **Sample chunk search.** `embedding/search.py` can now build the same Faiss
+  index from `samples/faiss_embedding_chunks_sample.jsonl` (200 rows) through
+  `iter_sample_chunks` and `ChunkVectorIndex.from_sample`. The sample carries
+  chunk text but no vectors, so `JinaTextEncoder` encodes it locally with
+  `task="retrieval"` and the model's `document` prompt — the defaults used by
+  Elasticsearch's `semantic_text` field — while queries use the matching
+  `query` prompt. `python -m embedding.search --sample ...` runs the path, with
+  `--encode-batch-size` and `--max-length` to bound CPU smoke tests. Covered by
+  new tests for the committed sample, malformed JSONL rows, document-prompt
+  encoding, batching, and `max_vectors`; `docs/INSIGHT_PLATFORM.md`, `README.md`
+  and `embedding/AGENTS.md` now describe the sample accurately.
+- `README.md` — comprehensive project documentation with repository structure, 
+  setup instructions, usage examples, and development guidelines. Provides a
+  single entry point for understanding the project.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety
   verdict distribution plus the false-positive classes, so the effect of a rule
   change is measurable rather than asserted. Supports `--limit` and `--json`.
@@ -62,6 +76,12 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- `AGENTS.md` — updated repository layout to include new `embedding/`, `samples/`,
+  and `big-query/` directories. Updated conventions to reflect Python 3.14+
+  requirement and added notes about FAISS indexes and vector data storage.
+- `COMMENTS.md` — added repository state update documenting the new embedding
+  and vector search capabilities, including `embedding/` directory contents,
+  sample data, BigQuery notebooks, and updated project configuration.
 - `pipeline.cli.main()` now accepts an optional `argv: list[str] | None = None`
   parameter so the CLI entry point can be tested or invoked programmatically
   without modifying `sys.argv`.

@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from embedding.search import (
+    DEFAULT_SAMPLE_PATH,
     EMBEDDING_DIM,
     ChunkSearchEngine,
     ChunkVectorIndex,
     EmbeddingDataError,
-    JinaQueryEncoder,
+    JinaTextEncoder,
     _batch_vectors,
     iter_embedding_batches,
+    iter_sample_chunks,
     main,
 )
 
@@ -65,6 +69,10 @@ def _write_shard(path, rows, dimension: int = EMBEDDING_DIM) -> None:
     pq.write_table(table, path)
 
 
+def _write_sample(path, rows) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
 class _FakeTensor:
     def __init__(self, values: np.ndarray) -> None:
         self.values = values
@@ -83,25 +91,35 @@ class _FakeTensor:
 
 
 class _FakeModel:
-    def __init__(self, vector: np.ndarray) -> None:
-        self.vector = vector
-        self.calls: list[tuple[list[str], str, str]] = []
+    def __init__(self, vectors: np.ndarray) -> None:
+        self.vectors = np.atleast_2d(np.asarray(vectors, dtype=np.float32))
+        self.calls: list[tuple[list[str], str, str, int | None]] = []
 
-    def encode(self, texts, task, prompt_name):
-        self.calls.append((texts, task, prompt_name))
-        return [_FakeTensor(self.vector)]
+    def encode(self, texts, task, prompt_name, max_length=None):
+        self.calls.append((list(texts), task, prompt_name, max_length))
+        rows = np.tile(self.vectors[0], (len(texts), 1))
+        return _FakeTensor(rows)
 
 
 class _FakeEncoder:
     dimension = EMBEDDING_DIM
 
-    def __init__(self, vector: np.ndarray) -> None:
-        self.vector = vector
+    def __init__(self, query_vector=None, document_map=None) -> None:
+        self.query_vector = _vector(0) if query_vector is None else query_vector
+        self.document_map = document_map or {}
         self.queries: list[str] = []
+        self.documents: list[str] = []
 
-    def encode(self, query: str) -> np.ndarray:
+    def encode_query(self, query: str) -> np.ndarray:
         self.queries.append(query)
-        return self.vector
+        return self.query_vector
+
+    def encode_documents(self, documents) -> np.ndarray:
+        documents = list(documents)
+        self.documents.extend(documents)
+        if self.document_map:
+            return np.vstack([self.document_map[text] for text in documents])
+        return np.tile(_vector(0), (len(documents), 1))
 
 
 def test_iter_embedding_batches_streams_every_shard(tmp_path):
@@ -286,36 +304,206 @@ def test_engine_rejects_mismatched_dimensions(tmp_path):
         ChunkSearchEngine(index, encoder)
 
 
-def test_query_encoder_rejects_unknown_task_and_prompt():
+def test_committed_sample_has_200_unique_chunks():
+    batches = list(iter_sample_chunks(DEFAULT_SAMPLE_PATH, batch_size=64))
+
+    assert [len(batch.ids) for batch in batches] == [64, 64, 64, 8]
+    ids = np.concatenate([batch.ids for batch in batches])
+    chunk_indices = np.concatenate([batch.chunk_indices for batch in batches])
+    texts = [text for batch in batches for text in batch.texts]
+
+    assert len(ids) == 200
+    assert len(set(ids.tolist())) == 200
+    np.testing.assert_array_equal(chunk_indices, np.zeros(200, dtype=np.int32))
+    assert all(text.strip() for text in texts)
+
+
+def test_sample_loader_numbers_repeated_ids(tmp_path):
+    sample = tmp_path / "sample.jsonl"
+    _write_sample(
+        sample,
+        [
+            {"id": 7, "content": "first chunk"},
+            {"id": 7, "content": "second chunk"},
+            {"id": 9, "content": "other story"},
+        ],
+    )
+
+    batches = list(iter_sample_chunks(sample, batch_size=10))
+
+    assert [batch.ids.tolist() for batch in batches] == [[7, 7, 9]]
+    assert [batch.chunk_indices.tolist() for batch in batches] == [[0, 1, 0]]
+    assert batches[0].texts == ["first chunk", "second chunk", "other story"]
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("{not json", "invalid JSON"),
+        ('{"content": "text"}', "'id' must be an integer"),
+        ('{"id": "7", "content": "text"}', "'id' must be an integer"),
+        ('{"id": 7}', "'content' must be a non-empty string"),
+        ('{"id": 7, "content": "   "}', "'content' must be a non-empty string"),
+    ],
+)
+def test_sample_loader_rejects_malformed_rows(tmp_path, line, message):
+    sample = tmp_path / "sample.jsonl"
+    sample.write_text(line + "\n", encoding="utf-8")
+
+    with pytest.raises(EmbeddingDataError, match=message):
+        list(iter_sample_chunks(sample))
+
+
+def test_sample_loader_rejects_a_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError, match="sample file does not exist"):
+        list(iter_sample_chunks(tmp_path / "missing.jsonl"))
+
+
+def test_index_from_sample_encodes_documents_and_ranks(tmp_path):
+    sample = tmp_path / "sample.jsonl"
+    _write_sample(
+        sample,
+        [
+            {"id": 101, "content": "sailing"},
+            {"id": 202, "content": "camping"},
+            {"id": 303, "content": "hiking"},
+        ],
+    )
+    encoder = _FakeEncoder(
+        _vector(1),
+        document_map={
+            "sailing": _vector(0),
+            "camping": _vector(1),
+            "hiking": _vector(2),
+        },
+    )
+
+    index = ChunkVectorIndex.from_sample(sample, encoder=encoder, batch_size=2)
+    hits = index.search(_vector(1), top_k=1)
+
+    assert encoder.documents == ["sailing", "camping", "hiking"]
+    assert index.size == 3
+    assert (hits[0].story_id, hits[0].chunk_index) == (202, 0)
+
+
+def test_index_from_sample_respects_max_vectors(tmp_path):
+    sample = tmp_path / "sample.jsonl"
+    _write_sample(
+        sample,
+        [{"id": 101, "content": "one"}, {"id": 202, "content": "two"}],
+    )
+    encoder = _FakeEncoder()
+
+    index = ChunkVectorIndex.from_sample(
+        sample, encoder=encoder, batch_size=1, max_vectors=1
+    )
+
+    assert index.size == 1
+    assert encoder.documents == ["one"]
+
+
+def test_engine_from_sample_indexes_and_searches(tmp_path):
+    sample = tmp_path / "sample.jsonl"
+    _write_sample(
+        sample,
+        [
+            {"id": 101, "content": "sailing"},
+            {"id": 202, "content": "camping"},
+        ],
+    )
+    encoder = _FakeEncoder(
+        _vector(1),
+        document_map={"sailing": _vector(0), "camping": _vector(1)},
+    )
+
+    engine = ChunkSearchEngine.from_sample(sample, encoder=encoder, batch_size=1)
+    hits = engine.search("a tent weekend", top_k=1)
+
+    assert engine.index.size == 2
+    assert encoder.documents == ["sailing", "camping"]
+    assert encoder.queries == ["a tent weekend"]
+    assert hits[0].story_id == 202
+
+
+def test_jina_encoder_rejects_unknown_task():
     with pytest.raises(ValueError, match="task"):
-        JinaQueryEncoder(task="reranking")
-    with pytest.raises(ValueError, match="prompt_name"):
-        JinaQueryEncoder(prompt_name="passage")
+        JinaTextEncoder(task="reranking")
 
 
-def test_query_encoder_returns_a_float32_vector():
+def test_jina_encoder_rejects_invalid_batching_options():
+    with pytest.raises(ValueError, match="encode_batch_size"):
+        JinaTextEncoder(encode_batch_size=0)
+    with pytest.raises(ValueError, match="max_length"):
+        JinaTextEncoder(max_length=0)
+
+
+def test_jina_encoder_returns_a_float32_vector():
     model = _FakeModel(_vector(4))
-    encoder = JinaQueryEncoder()
+    encoder = JinaTextEncoder()
     encoder._model = model
 
-    vector = encoder.encode("rivals to lovers at summer camp")
+    vector = encoder.encode_query("rivals to lovers at summer camp")
 
     assert vector.shape == (EMBEDDING_DIM,)
     assert vector.dtype == np.float32
-    assert model.calls == [(["rivals to lovers at summer camp"], "retrieval", "query")]
+    assert model.calls == [
+        (["rivals to lovers at summer camp"], "retrieval", "query", None)
+    ]
 
 
-def test_query_encoder_rejects_wrong_model_dimension():
-    encoder = JinaQueryEncoder()
-    encoder._model = _FakeModel(np.zeros(8, dtype=np.float32))
+def test_jina_encoder_uses_the_document_prompt_for_chunks():
+    model = _FakeModel(_vector(2))
+    encoder = JinaTextEncoder()
+    encoder._model = model
+
+    matrix = encoder.encode_documents(["first chunk", "second chunk"])
+
+    assert matrix.shape == (2, EMBEDDING_DIM)
+    assert matrix.dtype == np.float32
+    assert model.calls == [
+        (["first chunk", "second chunk"], "retrieval", "document", None)
+    ]
+
+
+def test_jina_encoder_splits_documents_into_batches():
+    model = _FakeModel(_vector(3))
+    encoder = JinaTextEncoder(encode_batch_size=2)
+    encoder._model = model
+
+    matrix = encoder.encode_documents(["a", "b", "c"])
+
+    assert matrix.shape == (3, EMBEDDING_DIM)
+    assert [call[0] for call in model.calls] == [["a", "b"], ["c"]]
+    assert [call[2] for call in model.calls] == ["document", "document"]
+
+
+def test_jina_encoder_passes_max_length_to_the_model():
+    model = _FakeModel(_vector(0))
+    encoder = JinaTextEncoder(max_length=512)
+    encoder._model = model
+
+    encoder.encode_documents(["a long chunk"])
+
+    assert model.calls[0][3] == 512
+
+
+def test_jina_encoder_rejects_wrong_model_dimension():
+    encoder = JinaTextEncoder()
+    encoder._model = _FakeModel(np.zeros((1, 8), dtype=np.float32))
 
     with pytest.raises(ValueError, match="expected 1024"):
-        encoder.encode("query")
+        encoder.encode_query("query")
 
 
-def test_query_encoder_rejects_empty_queries():
+def test_jina_encoder_rejects_empty_inputs():
+    encoder = JinaTextEncoder()
+
     with pytest.raises(ValueError, match="non-empty"):
-        JinaQueryEncoder().encode("   ")
+        encoder.encode_query("   ")
+    with pytest.raises(ValueError, match="must not be empty"):
+        encoder.encode_documents([])
+    with pytest.raises(ValueError, match="non-empty strings"):
+        encoder.encode_documents(["valid", " "])
 
 
 def test_cli_reports_a_missing_embedding_directory(tmp_path, capsys):
