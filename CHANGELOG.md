@@ -12,6 +12,7 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- **Document vector-search architecture and risks.** `analysis_outputs/SUMMARY.md`, `analysis_outputs/RISKS.md`, and `analysis_outputs/status.json` map the `embedding/` search paths and record implementation evidence, the CPU-vs-GPU documentation mismatch, and unverified scale/relevance assumptions so future changes can start from an explicit system boundary.
 - **Declare the chunk-export serializer dependency.** `embedding/get_chuncks.py`
   imports `orjson` directly, so `pyproject.toml` now declares it instead of
   relying on an undeclared or transitive installation; a fresh project sync can

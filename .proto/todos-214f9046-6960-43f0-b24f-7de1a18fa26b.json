@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Check available test dependencies",
+    "status": "completed"
+  },
+  {
+    "content": "Run the complete test suite",
+    "status": "completed"
+  },
+  {
+    "content": "Triage failures and report verified results",
+    "status": "completed"
+  }
+]
