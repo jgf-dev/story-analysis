@@ -1,4 +1,4 @@
-"""Tests for the production Faiss chunk-search path (embedding/search.py)."""
+"""Tests for the production Faiss chunk-search path (embedding/search.py and split modules)."""
 
 from __future__ import annotations
 
@@ -9,18 +9,19 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from embedding.search import (
+import embedding.search as search_facade
+from embedding.data_loading import (
     DEFAULT_SAMPLE_PATH,
     EMBEDDING_DIM,
-    ChunkSearchEngine,
-    ChunkVectorIndex,
     EmbeddingDataError,
-    JinaTextEncoder,
     _batch_vectors,
     iter_embedding_batches,
     iter_sample_chunks,
-    main,
 )
+from embedding.search import main
+from embedding.search_engine import ChunkSearchEngine
+from embedding.text_encoder import JinaTextEncoder
+from embedding.vector_index import ChunkVectorIndex
 
 SCHEMA = pa.schema(
     [
@@ -511,3 +512,20 @@ def test_cli_reports_a_missing_embedding_directory(tmp_path, capsys):
 
     assert exit_code == 1
     assert "does not exist" in capsys.readouterr().err
+
+
+def test_search_facade_reexports_split_modules():
+    from embedding import data_loading, search_engine, text_encoder, vector_index
+
+    assert search_facade.EMBEDDING_DIM == data_loading.EMBEDDING_DIM
+    assert search_facade.EmbeddingBatch is data_loading.EmbeddingBatch
+    assert search_facade.ChunkTextBatch is data_loading.ChunkTextBatch
+    assert search_facade.EmbeddingDataError is data_loading.EmbeddingDataError
+    assert search_facade.iter_embedding_batches is data_loading.iter_embedding_batches
+    assert search_facade.iter_sample_chunks is data_loading.iter_sample_chunks
+    assert search_facade.ChunkVectorIndex is vector_index.ChunkVectorIndex
+    assert search_facade.SearchHit is vector_index.SearchHit
+    assert search_facade.JinaTextEncoder is text_encoder.JinaTextEncoder
+    assert search_facade.DEFAULT_MODEL == text_encoder.DEFAULT_MODEL
+    assert search_facade.TASKS == text_encoder.TASKS
+    assert search_facade.ChunkSearchEngine is search_engine.ChunkSearchEngine

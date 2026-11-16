@@ -79,6 +79,15 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- **Split `embedding/search.py` into focused modules.** Extracted data
+  streaming (`embedding/data_loading.py`), the Faiss cosine index
+  (`embedding/vector_index.py`), the Jina v5 text encoder
+  (`embedding/text_encoder.py`), and the search engine
+  (`embedding/search_engine.py`) out of `embedding/search.py`.
+  `embedding/search.py` remains the CLI entrypoint (`python -m embedding.search`)
+  and re-export facade for backwards compatibility. Updated
+  `tests/test_embedding_search.py`, `docs/INSIGHT_PLATFORM.md`, and
+  `README.md` to match.
 - `AGENTS.md` — updated repository layout to include new `embedding/`, `samples/`,
   and `big-query/` directories. Updated conventions to reflect Python 3.14+
   requirement and added notes about FAISS indexes and vector data storage.

@@ -36,10 +36,14 @@ story-analysis/
 │
 ├── embedding/             # Vector embedding and search
 │   ├── data.py            # Test embedding data
+│   ├── data_loading.py    # Streaming Parquet shard and JSONL sample readers
 │   ├── faiss_demo.py      # FAISS vector search demonstration
 │   ├── get_chuncks.py     # Chunk extraction utilities
 │   ├── get_vectors.py     # Vector generation utilities
-│   └── search.py          # Production Faiss chunk search
+│   ├── search.py          # Production Faiss chunk search CLI and facade
+│   ├── search_engine.py   # End-to-end query -> encoder -> index search engine
+│   ├── text_encoder.py    # Jina v5 query and document text encoder
+│   └── vector_index.py    # Faiss exact cosine-similarity chunk index
 │
 ├── parse/                 # Document parsing
 │   └── parse.py           # Unstructured document parsing client
