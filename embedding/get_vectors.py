@@ -1,4 +1,4 @@
-import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -6,8 +6,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from elasticsearch import Elasticsearch, helpers
 
-ES_URL = os.environ["ES_URL"]
-ES_API_KEY = os.environ["ES_API_KEY"]
+from embedding.export_utils import (
+    discard_staging_directory,
+    make_staging_directory,
+    publish_directory,
+    require_environment,
+)
+
 INDEX_NAME = "story_text_plain_v2"
 OUTPUT_DIR = Path("data/vectors")
 NUM_SLICES = 8  # Match to ES shard count or local CPU cores
@@ -23,10 +28,12 @@ SCHEMA = pa.schema([
 ])
 
 
-def extract_slice(slice_id: int) -> int:
+def extract_slice(
+    slice_id: int, es_url: str, es_api_key: str, output_dir: Path
+) -> int:
     es = Elasticsearch(
-        ES_URL,
-        api_key=ES_API_KEY,
+        es_url,
+        api_key=es_api_key,
         http_compress=True,  # Critical: cuts 20GB JSON transfer by ~75%
         request_timeout=120,
         max_retries=5,
@@ -42,7 +49,7 @@ def extract_slice(slice_id: int) -> int:
         ],
     }
 
-    shard_path = OUTPUT_DIR / f"part16-{slice_id:02d}.parquet"
+    shard_path = output_dir / f"part16-{slice_id:02d}.parquet"
     buffer = []
     total_chunks = 0
 
@@ -81,20 +88,33 @@ def extract_slice(slice_id: int) -> int:
     return total_chunks
 
 
-def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def main() -> int:
+    try:
+        es_url, es_api_key = require_environment("ES_URL", "ES_API_KEY")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    staging_dir = make_staging_directory(OUTPUT_DIR)
     total_exported = 0
+    try:
+        with ProcessPoolExecutor(max_workers=NUM_SLICES) as executor:
+            futures = {
+                executor.submit(extract_slice, s, es_url, es_api_key, staging_dir): s
+                for s in range(NUM_SLICES)
+            }
+            for future in as_completed(futures):
+                slice_id = futures[future]
+                count = future.result()
+                total_exported += count
+                print(f"Slice {slice_id:02d} complete: {count:,} chunks written.")
+        publish_directory(staging_dir, OUTPUT_DIR)
+    finally:
+        discard_staging_directory(staging_dir)
 
-    with ProcessPoolExecutor(max_workers=NUM_SLICES) as executor:
-        futures = {executor.submit(extract_slice, s): s for s in range(NUM_SLICES)}
-        for future in as_completed(futures):
-            slice_id = futures[future]
-            count = future.result()
-            total_exported += count
-            print(f"Slice {slice_id:02d} complete: {count:,} chunks written.")
-
-    print(f"Export complete. Total chunks: {total_exported:,}")
+    print(f"Export complete. Total chunks: {total_exported:,} in {OUTPUT_DIR}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

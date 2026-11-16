@@ -154,7 +154,8 @@ Required keys:
 - `HYDRA_DB_API_KEY`: Database API key
 - `ES_HOST`: Elasticsearch host URL
 - `ES_KB_HOST`: Elasticsearch Knowledge Base host URL
-- `ES_API_KEY`: Elasticsearch API key
+- `ES_URL`: Elasticsearch URL used by the embedding exporters
+- `ES_API_KEY`: Elasticsearch API key used by the embedding exporters
 
 ## Usage
 

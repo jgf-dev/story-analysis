@@ -169,7 +169,14 @@ production query path over the 1024-d chunk embeddings exported by
 calls it `get_chunks.py`). The implementation is split across four focused
 modules under `embedding/`. The export writes one `data/chunks/part-NN.parquet`
 shard per Elasticsearch slice with
-`(id, chunk_index, start_offset, end_offset, chunk_text, embedding)`.
+`(id, chunk_index, start_offset, end_offset, chunk_text, embedding)`. Both
+exporters require `ES_URL` and `ES_API_KEY`. They write every slice into a
+staging directory and replace the published export only after all slices finish;
+a failed run leaves the previous complete export intact. If interrupted while
+promoting a completed run, the next search or export restores the preserved
+previous directory before proceeding. Staging remains private and writable
+while slices are generated, then preserves the previous export's permissions or
+uses the normal directory mode under the process umask on a first export.
 
 1. `embedding/data_loading.py` (`iter_embedding_batches`) streams each shard in
    record batches, so the ~1M vectors (about 4 GB) are never loaded as one

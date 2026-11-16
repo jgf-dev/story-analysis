@@ -1,4 +1,4 @@
-import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -8,8 +8,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from elasticsearch import Elasticsearch, JsonSerializer, helpers
 
-ES_URL = os.environ["ES_URL"]
-ES_API_KEY = os.environ["ES_API_KEY"]
+from embedding.export_utils import (
+    discard_staging_directory,
+    make_staging_directory,
+    publish_directory,
+    require_environment,
+)
+
 INDEX_NAME = "story_text_plain_v2"
 OUTPUT_DIR = Path("data/chunks")
 
@@ -32,10 +37,12 @@ class OrjsonSerializer(JsonSerializer):
         return orjson.loads(data)
 
 
-def extract_slice(slice_id: int) -> tuple[int, int]:
+def extract_slice(
+    slice_id: int, es_url: str, es_api_key: str, output_dir: Path
+) -> tuple[int, int]:
     es = Elasticsearch(
-        ES_URL,
-        api_key=ES_API_KEY,
+        es_url,
+        api_key=es_api_key,
         http_compress=True,
         serializer=OrjsonSerializer(),
         request_timeout=120,
@@ -54,7 +61,7 @@ def extract_slice(slice_id: int) -> tuple[int, int]:
         ],
     }
 
-    shard_path = OUTPUT_DIR / f"part-{slice_id:02d}.parquet"
+    shard_path = output_dir / f"part-{slice_id:02d}.parquet"
     ids: list[int] = []
     chunk_indices: list[int] = []
     start_offsets: list[int] = []
@@ -125,22 +132,41 @@ def extract_slice(slice_id: int) -> tuple[int, int]:
     return total_docs, total_chunks
 
 
-def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def main() -> int:
+    try:
+        es_url, es_api_key = require_environment("ES_URL", "ES_API_KEY")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    staging_dir = make_staging_directory(OUTPUT_DIR)
     grand_docs = 0
     grand_chunks = 0
+    try:
+        with ProcessPoolExecutor(max_workers=NUM_SLICES) as executor:
+            futures = {
+                executor.submit(extract_slice, s, es_url, es_api_key, staging_dir): s
+                for s in range(NUM_SLICES)
+            }
+            for future in as_completed(futures):
+                slice_id = futures[future]
+                docs, chunks = future.result()
+                grand_docs += docs
+                grand_chunks += chunks
+                print(
+                    f"Slice {slice_id:02d} complete: {docs:,} docs | "
+                    f"{chunks:,} chunks"
+                )
+        publish_directory(staging_dir, OUTPUT_DIR)
+    finally:
+        discard_staging_directory(staging_dir)
 
-    with ProcessPoolExecutor(max_workers=NUM_SLICES) as executor:
-        futures = {executor.submit(extract_slice, s): s for s in range(NUM_SLICES)}
-        for future in as_completed(futures):
-            slice_id = futures[future]
-            docs, chunks = future.result()
-            grand_docs += docs
-            grand_chunks += chunks
-            print(f"Slice {slice_id:02d} complete: {docs:,} docs | {chunks:,} chunks")
-
-    print(f"Export finished: {grand_docs:,} total docs, {grand_chunks:,} total chunks in {OUTPUT_DIR}")
+    print(
+        f"Export finished: {grand_docs:,} total docs, {grand_chunks:,} "
+        f"total chunks in {OUTPUT_DIR}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

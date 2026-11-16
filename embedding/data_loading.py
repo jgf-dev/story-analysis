@@ -22,6 +22,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from embedding.export_utils import recover_published_directory
+
 EMBEDDING_DIM = 1024
 DEFAULT_PARQUET_DIR = Path("data/chunks")
 DEFAULT_SAMPLE_PATH = Path("samples/faiss_embedding_chunks_sample.jsonl")
@@ -56,6 +58,7 @@ class ChunkTextBatch:
 
 def _parquet_shards(parquet_dir: str | Path) -> list[Path]:
     directory = Path(parquet_dir)
+    recover_published_directory(directory)
     if not directory.is_dir():
         raise FileNotFoundError(f"embedding directory does not exist: {directory}")
     shards = sorted(directory.glob("*.parquet"))

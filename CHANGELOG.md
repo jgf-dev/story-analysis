@@ -12,6 +12,10 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- **Declare the chunk-export serializer dependency.** `embedding/get_chuncks.py`
+  imports `orjson` directly, so `pyproject.toml` now declares it instead of
+  relying on an undeclared or transitive installation; a fresh project sync can
+  run the exporter without manual package installation.
 - **Production Faiss chunk search.** `embedding/search.py` streams the 1024-d
   embeddings written by `embedding/get_chuncks.py` from `data/chunks/*.parquet`
   into an exact cosine index (`faiss.IndexFlatIP` over L2-normalised vectors),
@@ -79,6 +83,17 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- **Publish only complete embedding exports.** `embedding/get_chuncks.py` and
+  `embedding/get_vectors.py` now write all slices into a staging directory and
+  publish it only after every slice succeeds, preserving the previous complete
+  export after a failed run; if interrupted during promotion, the previous
+  export is restored on the next search or export. Staging remains private and
+  writable until publication, then preserves the prior directory permissions or
+  applies the normal directory mode under the current umask on a first export.
+  Missing `ES_URL` or
+  `ES_API_KEY` now produces a concise CLI error. `README.md` and
+  `docs/INSIGHT_PLATFORM.md` document the required settings and publication
+  behavior.
 - **Split `embedding/search.py` into focused modules.** Extracted data
   streaming (`embedding/data_loading.py`), the Faiss cosine index
   (`embedding/vector_index.py`), the Jina v5 text encoder
