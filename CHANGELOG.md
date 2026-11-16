@@ -83,6 +83,14 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- **Use `bun` in Flox activation and document Flox setup.** Switched the
+  `on-activate` hook in `.flox/env/manifest.toml` from `npm install` to
+  `bun install` (adding the `bun` package and updating `.flox/env/manifest.lock`
+  and `.flox/env.lock`), and replaced the legacy `python -m venv` /
+  `pip install -e .` instructions in `README.md` with Flox installation steps
+  and `flox activate` documentation explaining how `.flox/env/manifest.toml`
+  installs system/CUDA packages, runs `bun install`, creates and syncs `.venv`
+  with `uv`, and activates `.venv` in the shell.
 - **Publish only complete embedding exports.** `embedding/get_chuncks.py` and
   `embedding/get_vectors.py` now write all slices into a staging directory and
   publish it only after every slice succeeds, preserving the previous complete

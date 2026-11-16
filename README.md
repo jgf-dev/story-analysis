@@ -121,24 +121,67 @@ The `embedding/` directory contains:
 
 ### Prerequisites
 
-- Python 3.14+
-- Node.js (for UI dependencies)
-- CUDA (for GPU-accelerated embeddings)
+- **Linux (`x86_64-linux`)**, as configured in `.flox/env/manifest.toml`
+- **[Flox](https://flox.dev)** — manages Python 3.14+, `uv`, `bun`, Node.js, and CUDA-enabled packages declaratively via `.flox/env/manifest.toml`
+- **CUDA-capable GPU** (optional; `cuda-detection = true` is enabled in `.flox/env/manifest.toml` for GPU-accelerated FAISS and embeddings)
 
-### Installation
+### Installing Flox
+
+Install Flox using the official installer script (which detects Debian/Ubuntu or Fedora/RHEL automatically):
 
 ```bash
-# Clone the repository
+curl -fsSL https://get.flox.dev | sh
+```
+
+Or install the native package manually on `x86_64-linux`:
+
+- **Debian / Ubuntu (`.deb`):**
+
+  ```bash
+  wget https://downloads.flox.dev/by-env/stable/deb/flox-latest.x86_64-linux.deb
+  sudo apt-get install ./flox-latest.x86_64-linux.deb
+  ```
+
+- **Fedora / RHEL (`.rpm`):**
+
+  ```bash
+  wget https://downloads.flox.dev/by-env/stable/rpm/flox-latest.x86_64-linux.rpm
+  sudo dnf install ./flox-latest.x86_64-linux.rpm
+  ```
+
+Verify the installation:
+
+```bash
+flox --version
+```
+
+### Repository Setup & Activating the Environment (`flox activate`)
+
+Clone the repository and run `flox activate` from the project root:
+
+```bash
 git clone git@github.com:jgf-dev/story-analysis.git
 cd story-analysis
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -e .
+flox activate
 ```
+
+When you run `flox activate`, `.flox/env/manifest.toml` automatically provisions the full environment and activates the Python virtual environment in your shell:
+
+1. **System & runtime packages (`[install]`):** Installs `python3` (`>=3.14.*`), `uv`, `bun`, `nodejs`, and CUDA-enabled builds of `faiss`, `numpy`, and `transformers` (along with `pyarrow`, `pandas`, `elasticsearch`, and `flox-mcp-server`).
+2. **Dependency installation (`[hook].on-activate`):**
+   - Runs `bun install` to install JavaScript dependencies from `package.json`.
+   - Creates `.venv` (`uv venv "$FLOX_ENV_PROJECT/.venv"`) if it does not already exist.
+   - Syncs Python dependencies from `pyproject.toml` and `uv.lock` via `uv sync`.
+3. **Virtual environment activation (`[profile].bash`):** Sources `.venv/bin/activate` so the project's Python virtual environment is immediately active in your Bash session.
+
+> **Alternative (without Flox):** If you already have Python 3.14+, `uv`, `bun`, and the required system libraries installed manually, you can set up the virtual environment directly with:
+>
+> ```bash
+> bun install
+> uv venv .venv
+> source .venv/bin/activate
+> uv sync
+> ```
 
 ### Environment Configuration
 
