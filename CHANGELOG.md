@@ -12,7 +12,34 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
-- `README.md` — comprehensive project documentation with repository structure, 
+- **Production Faiss chunk search.** `embedding/search.py` streams the 1024-d
+  embeddings written by `embedding/get_chuncks.py` from `data/chunks/*.parquet`
+  into an exact cosine index (`faiss.IndexFlatIP` over L2-normalised vectors),
+  encodes plaintext queries with `jinaai/jina-embeddings-v5-text-small` and its
+  retrieval query prompt, and returns ranked `(story id, chunk index)` hits.
+  Peak build memory is one Parquet batch plus the ~4 GB index, so the ~1M-row
+  export is never loaded whole. `python -m embedding.search "..."` runs the
+  query path, and `--max-vectors` builds a partial index for smoke tests. The
+  model needs `torch`, `peft` and `pyarrow`, which are now declared in
+  `pyproject.toml` so a fresh `uv sync` can run the query path. Covered by
+  `tests/test_embedding_search.py`: shard streaming, schema and dimension
+  failures, cosine ranking, `max_vectors`, encoder validation, and the CLI's
+  missing-directory error. See `docs/INSIGHT_PLATFORM.md` for usage.
+- **Sample chunk search.** `embedding/search.py` can now build the same Faiss
+  index from `samples/faiss_embedding_chunks_sample.jsonl` (200 rows) through
+  `iter_sample_chunks` and `ChunkVectorIndex.from_sample`. The sample carries
+  chunk text but no vectors, so `JinaTextEncoder` encodes it locally with
+  `task="retrieval"` and the model's `document` prompt — the defaults used by
+  Elasticsearch's `semantic_text` field — while queries use the matching
+  `query` prompt. `python -m embedding.search --sample ...` runs the path, with
+  `--encode-batch-size` and `--max-length` to bound CPU smoke tests. Covered by
+  new tests for the committed sample, malformed JSONL rows, document-prompt
+  encoding, batching, and `max_vectors`; `docs/INSIGHT_PLATFORM.md`, `README.md`
+  and `embedding/AGENTS.md` now describe the sample accurately.
+- `README.md` — comprehensive project documentation with repository structure,
+  setup instructions, usage examples, and development guidelines. Provides a
+  single entry point for understanding the project.
+- `README.md` — comprehensive project documentation with repository structure,
   setup instructions, usage examples, and development guidelines. Provides a
   single entry point for understanding the project.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety

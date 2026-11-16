@@ -38,7 +38,8 @@ story-analysis/
 │   ├── data.py            # Test embedding data
 │   ├── faiss_demo.py      # FAISS vector search demonstration
 │   ├── get_chuncks.py     # Chunk extraction utilities
-│   └── get_vectors.py     # Vector generation utilities
+│   ├── get_vectors.py     # Vector generation utilities
+│   └── search.py          # Production Faiss chunk search
 │
 ├── parse/                 # Document parsing
 │   └── parse.py           # Unstructured document parsing client
@@ -59,7 +60,7 @@ story-analysis/
 │
 ├── samples/               # Sample data
 │   ├── sample_stories.json        # Sample stories for testing
-│   └── faiss_embedding_chunks_sample.jsonl  # Sample embeddings
+│   └── faiss_embedding_chunks_sample.jsonl  # 200 sample chunks (text)
 │
 ├── big-query/             # BigQuery data exploration
 │   └── data_exploration.ipynb     # Jupyter notebook for data analysis
@@ -145,6 +146,7 @@ cp .env.example .env
 ```
 
 Required keys:
+
 - `HYDRA_DB_API_KEY`: Database API key
 - `ES_HOST`: Elasticsearch host URL
 - `ES_KB_HOST`: Elasticsearch Knowledge Base host URL
@@ -191,14 +193,23 @@ python scripts/measure_safety.py --limit 1000 --verbose
 
 ### FAISS Vector Search
 
-Run the FAISS demonstration:
+Run the small demonstration script:
 
 ```bash
-# Ensure test data exists (convert sample to parquet first)
 python embedding/faiss_demo.py
+```
 
-# Or use the search pipeline
-# (Note: embedding/search.py is available on main branch)
+Search the committed 200-chunk sample. The sample carries chunk text but no
+vectors, so the search pipeline encodes it locally with the Jina document
+prompt before searching:
+
+```bash
+# Fast smoke test: truncate chunks to 128 tokens and encode one at a time
+python -m embedding.search --sample --max-length 128 --encode-batch-size 1 \
+  "a first time story at summer camp" --top-k 5
+
+# Search the full Parquet export written by embedding/get_chuncks.py
+python -m embedding.search "a cabin weekend" --top-k 10
 ```
 
 ### Web UI
@@ -297,7 +308,7 @@ See `CHANGELOG.md` for detailed change history.
 ### Latest Additions (Unreleased)
 
 - **embedding/** directory: FAISS vector search demonstration and test data
-- **samples/faiss_embedding_chunks_sample.jsonl**: 200 sample chunks with embeddings
+- **samples/faiss_embedding_chunks_sample.jsonl**: 200 sample chunks with text for local encoding
 - **embedding/data.py**: Test embedding vectors
 - **embedding/faiss_demo.py**: FAISS search demonstration script
 - **big-query/data_exploration.ipynb**: BigQuery data analysis notebook
