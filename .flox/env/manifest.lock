@@ -3,6 +3,9 @@
   "manifest": {
     "schema-version": "1.19.0",
     "install": {
+      "bun": {
+        "pkg-path": "bun"
+      },
       "elasticsearch": {
         "pkg-path": "python314Packages.elasticsearch"
       },
@@ -46,7 +49,7 @@
       "ES_URL": "https://stories-ec0351.es.us-east4.gcp.elastic.cloud:443"
     },
     "hook": {
-      "on-activate": "  npm install\n\n  export PYTHON_DIR=\"$FLOX_ENV_PROJECT/.venv\"\n  if [ ! -d \"$PYTHON_DIR\" ]; then\n    echo \"Creating python virtual environment in $PYTHON_DIR\"\n    uv venv \"$PYTHON_DIR\"\n  fi\n\n  (\n    source \"$PYTHON_DIR/bin/activate\"\n    uv sync\n  )\n\n"
+      "on-activate": "  bun install\n\n  export PYTHON_DIR=\"$FLOX_ENV_PROJECT/.venv\"\n  if [ ! -d \"$PYTHON_DIR\" ]; then\n    echo \"Creating python virtual environment in $PYTHON_DIR\"\n    uv venv \"$PYTHON_DIR\"\n  fi\n\n  (\n    source \"$PYTHON_DIR/bin/activate\"\n    uv sync\n  )\n\n"
     },
     "profile": {
       "bash": "  echo \"Activating python virtual environment\" >&2\n  source \"$PYTHON_DIR/bin/activate\"\n"
@@ -152,19 +155,49 @@
       "priority": 5
     },
     {
+      "attr_path": "bun",
+      "broken": false,
+      "derivation": "/nix/store/mr3j90mynhxd0zzv11pg64a8xkbwlb1y-bun-1.4.4.drv",
+      "description": "Incredibly fast JavaScript runtime, bundler, transpiler and package manager – all in one",
+      "install_id": "bun",
+      "license": "[ MIT, LGPL-2.1-only ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "name": "bun-1.4.4",
+      "pname": "bun",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.493951Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.4.4",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/0gk371kgjyv7s0az07hxjrl8g9k0pf3m-bun-1.4.4"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
       "attr_path": "python314Packages.elasticsearch",
       "broken": false,
       "derivation": "/nix/store/3i2dqw1h6rzqnqs82cv3pjqfkb3jmjdl-python3.14-elasticsearch-8.19.3.drv",
       "description": "Official low-level client for Elasticsearch",
       "install_id": "elasticsearch",
       "license": "Apache-2.0",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "python3.14-elasticsearch-8.19.3",
       "pname": "elasticsearch",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.615195Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.796159Z",
       "stabilities": [
         "unstable"
       ],
@@ -188,13 +221,13 @@
       "description": "Event-driven I/O framework for the V8 JavaScript engine",
       "install_id": "nodejs",
       "license": "MIT",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "nodejs-24.22.2",
       "pname": "nodejs",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.514434Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.678213Z",
       "stabilities": [
         "unstable"
       ],
@@ -218,13 +251,13 @@
       "description": "Powerful data structures for data analysis, time series, and statistics",
       "install_id": "pandas",
       "license": "BSD-3-Clause",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "python3.14-pandas-3.0.4",
       "pname": "pandas",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.629246Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.812405Z",
       "stabilities": [
         "unstable"
       ],
@@ -250,13 +283,13 @@
       "description": "PyPA recommended tool for installing Python packages",
       "install_id": "pip",
       "license": "MIT",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "python3.14-pip-26.2.2",
       "pname": "pip",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.630101Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.813411Z",
       "stabilities": [
         "unstable"
       ],
@@ -283,13 +316,13 @@
       "description": "Cross-language development platform for in-memory data",
       "install_id": "pyarrow",
       "license": "Apache-2.0",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "python3.14-pyarrow-24.0.0",
       "pname": "pyarrow",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.631621Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.815238Z",
       "stabilities": [
         "unstable"
       ],
@@ -314,13 +347,13 @@
       "description": "High-level dynamically-typed programming language",
       "install_id": "python3",
       "license": "Python-2.0",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "python3-3.14.10",
       "pname": "python3",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.559594Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.732327Z",
       "stabilities": [
         "unstable"
       ],
@@ -347,13 +380,13 @@
       "description": "Extremely fast Python package installer and resolver, written in Rust",
       "install_id": "uv",
       "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d5cc6833999746cffdfe0598f7bc801a57b887a9",
       "name": "uv-0.13.7",
       "pname": "uv",
-      "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-      "rev_count": 1117658,
-      "rev_date": "2026-11-11T08:42:49Z",
-      "scrape_date": "2026-11-13T06:52:55.749615Z",
+      "rev": "d5cc6833999746cffdfe0598f7bc801a57b887a9",
+      "rev_count": 1119549,
+      "rev_date": "2026-11-13T02:32:26Z",
+      "scrape_date": "2026-11-16T06:42:25.938630Z",
       "stabilities": [
         "unstable"
       ],

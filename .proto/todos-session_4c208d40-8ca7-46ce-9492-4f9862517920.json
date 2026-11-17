@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Load review guidance and inspect repository changes",
+    "status": "completed"
+  },
+  {
+    "content": "Verify concurrency and permission handling",
+    "status": "completed"
+  },
+  {
+    "content": "Report actionable findings with severity",
+    "status": "completed"
+  }
+]

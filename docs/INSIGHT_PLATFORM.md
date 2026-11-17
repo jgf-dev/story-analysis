@@ -12,6 +12,7 @@ This platform is internal-only and runs locally.
 | Corpus prep | `insights/corpus_prep.py` | `data/catalog.sqlite` (deduped, tagged catalogue) |
 | Analysis | `insights/analysis.py` | `insights_output/analysis/analysis.json` |
 | Semantic embeddings + clusters | `insights/semantic.py` | `insights_output/vectors.npz`, `clusters.json`, `pipeline.pkl` |
+| Dense chunk search | `embedding/search.py` (+ `data_loading`, `vector_index`, `text_encoder`, `search_engine`) | in-memory Faiss cosine index; ranked chunk hits |
 | NER + combination search | `insights/ner.py` | `entity_mentions` table in the catalogue |
 | Internal UI + TTS audition | `insights/ui.py`, `insights/tts_audition.py` | local web app on `127.0.0.1:8765` |
 
@@ -159,6 +160,68 @@ top terms of the inverse-transformed centroid, with exemplar stories.
 ```bash
 python -m insights.semantic --db data/catalog.sqlite --out-dir insights_output --clusters 40
 ```
+
+## Dense chunk search (Faiss)
+
+`embedding/search.py` is the CLI entrypoint and re-export facade for the
+production query path over the 1024-d chunk embeddings exported by
+`embedding/get_chuncks.py` (the script name in the repository; the task brief
+calls it `get_chunks.py`). The implementation is split across four focused
+modules under `embedding/`. The export writes one `data/chunks/part-NN.parquet`
+shard per Elasticsearch slice with
+`(id, chunk_index, start_offset, end_offset, chunk_text, embedding)`. Both
+exporters require `ES_URL` and `ES_API_KEY`. They write every slice into a
+staging directory and replace the published export only after all slices finish;
+a failed run leaves the previous complete export intact. If interrupted while
+promoting a completed run, the next search or export restores the preserved
+previous directory before proceeding. Staging remains private and writable
+while slices are generated, then preserves the previous export's permissions or
+uses the normal directory mode under the process umask on a first export.
+
+1. `embedding/data_loading.py` (`iter_embedding_batches`) streams each shard in
+   record batches, so the ~1M vectors (about 4 GB) are never loaded as one
+   array. Peak build memory is one batch plus the index.
+2. `embedding/vector_index.py` (`ChunkVectorIndex`) L2-normalises each batch
+   and adds it to a Faiss `IndexFlatIP`, making the score an exact cosine
+   similarity. Flat search is used because 1M vectors do not justify an
+   approximate index or a training step.
+3. `embedding/text_encoder.py` (`JinaTextEncoder`) downloads
+   `jinaai/jina-embeddings-v5-text-small` on first use (then reuses the Hugging
+   Face cache). Queries are encoded with `task="retrieval"` and the model's
+   `query` prompt; document text is encoded with the same task and the
+   `document` prompt. Those are the defaults the `semantic_text` field uses for
+   the Jina v5 models, so locally encoded vectors match the vectors
+   Elasticsearch produced for the live index. The model returns 1024-d
+   L2-normalised vectors, matching the export.
+4. `embedding/search_engine.py` (`ChunkSearchEngine.search`) encodes a
+   plaintext query and returns ranked `(story id, chunk index, cosine score)`
+   hits. Chunk text is not duplicated into the index; resolve it from the same
+   Parquet shard or Elasticsearch.
+
+```bash
+python -m embedding.search "two rivals at summer camp" --top-k 10
+python -m embedding.search "a cabin weekend" --top-k 5 --max-vectors 50000 --json
+```
+
+`samples/faiss_embedding_chunks_sample.jsonl` holds 200 chunks as JSONL
+(`id`, `content`) without vectors. `--sample` reads it, encodes each chunk with
+`iter_sample_chunks` + the document prompt, and searches the same index:
+
+```bash
+# Truncate to 128 tokens to keep the CPU smoke test near two minutes
+python -m embedding.search --sample --max-length 128 --encode-batch-size 4 \
+  "a first time story at summer camp" --top-k 5
+```
+
+The model requires `torch` and `peft` in addition to `transformers`. Inference
+uses CUDA when available (`--device cuda` to require it, `--device cpu` to force
+CPU) and `float32` on CPU, `bfloat16` on GPU; on CPU the loaded model itself
+needs roughly 2.7 GB on top of the index. `--threads` controls Faiss search
+threads; `--max-vectors` builds a partial index for a smoke test against the
+real export without reading every shard. On the `--sample` path,
+`--encode-batch-size` sets how many chunks go through the model per call and
+`--max-length` truncates long chunks; omit it to use the model's full 32K-token
+context.
 
 ## NER combination search
 

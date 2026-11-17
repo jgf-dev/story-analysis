@@ -1,0 +1,22 @@
+[
+  {
+    "content": "Read analysis policy and repo context",
+    "status": "completed"
+  },
+  {
+    "content": "Trace vector search flow and tests",
+    "status": "completed"
+  },
+  {
+    "content": "Write summary risks and status outputs",
+    "status": "completed"
+  },
+  {
+    "content": "Record analysis outputs in changelog",
+    "status": "completed"
+  },
+  {
+    "content": "Run required tests and lint checks",
+    "status": "completed"
+  }
+]

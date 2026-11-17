@@ -36,9 +36,14 @@ story-analysis/
 │
 ├── embedding/             # Vector embedding and search
 │   ├── data.py            # Test embedding data
+│   ├── data_loading.py    # Streaming Parquet shard and JSONL sample readers
 │   ├── faiss_demo.py      # FAISS vector search demonstration
 │   ├── get_chuncks.py     # Chunk extraction utilities
-│   └── get_vectors.py     # Vector generation utilities
+│   ├── get_vectors.py     # Vector generation utilities
+│   ├── search.py          # Production Faiss chunk search CLI and facade
+│   ├── search_engine.py   # End-to-end query -> encoder -> index search engine
+│   ├── text_encoder.py    # Jina v5 query and document text encoder
+│   └── vector_index.py    # Faiss exact cosine-similarity chunk index
 │
 ├── parse/                 # Document parsing
 │   └── parse.py           # Unstructured document parsing client
@@ -59,7 +64,7 @@ story-analysis/
 │
 ├── samples/               # Sample data
 │   ├── sample_stories.json        # Sample stories for testing
-│   └── faiss_embedding_chunks_sample.jsonl  # Sample embeddings
+│   └── faiss_embedding_chunks_sample.jsonl  # 200 sample chunks (text)
 │
 ├── big-query/             # BigQuery data exploration
 │   └── data_exploration.ipynb     # Jupyter notebook for data analysis
@@ -116,24 +121,67 @@ The `embedding/` directory contains:
 
 ### Prerequisites
 
-- Python 3.14+
-- Node.js (for UI dependencies)
-- CUDA (for GPU-accelerated embeddings)
+- **Linux (`x86_64-linux`)**, as configured in `.flox/env/manifest.toml`
+- **[Flox](https://flox.dev)** — manages Python 3.14+, `uv`, `bun`, Node.js, and CUDA-enabled packages declaratively via `.flox/env/manifest.toml`
+- **CUDA-capable GPU** (optional; `cuda-detection = true` is enabled in `.flox/env/manifest.toml` for GPU-accelerated FAISS and embeddings)
 
-### Installation
+### Installing Flox
+
+Install Flox using the official installer script (which detects Debian/Ubuntu or Fedora/RHEL automatically):
 
 ```bash
-# Clone the repository
+curl -fsSL https://get.flox.dev | sh
+```
+
+Or install the native package manually on `x86_64-linux`:
+
+- **Debian / Ubuntu (`.deb`):**
+
+  ```bash
+  wget https://downloads.flox.dev/by-env/stable/deb/flox-latest.x86_64-linux.deb
+  sudo apt-get install ./flox-latest.x86_64-linux.deb
+  ```
+
+- **Fedora / RHEL (`.rpm`):**
+
+  ```bash
+  wget https://downloads.flox.dev/by-env/stable/rpm/flox-latest.x86_64-linux.rpm
+  sudo dnf install ./flox-latest.x86_64-linux.rpm
+  ```
+
+Verify the installation:
+
+```bash
+flox --version
+```
+
+### Repository Setup & Activating the Environment (`flox activate`)
+
+Clone the repository and run `flox activate` from the project root:
+
+```bash
 git clone git@github.com:jgf-dev/story-analysis.git
 cd story-analysis
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -e .
+flox activate
 ```
+
+When you run `flox activate`, `.flox/env/manifest.toml` automatically provisions the full environment and activates the Python virtual environment in your shell:
+
+1. **System & runtime packages (`[install]`):** Installs `python3` (`>=3.14.*`), `uv`, `bun`, `nodejs`, and CUDA-enabled builds of `faiss`, `numpy`, and `transformers` (along with `pyarrow`, `pandas`, `elasticsearch`, and `flox-mcp-server`).
+2. **Dependency installation (`[hook].on-activate`):**
+   - Runs `bun install` to install JavaScript dependencies from `package.json`.
+   - Creates `.venv` (`uv venv "$FLOX_ENV_PROJECT/.venv"`) if it does not already exist.
+   - Syncs Python dependencies from `pyproject.toml` and `uv.lock` via `uv sync`.
+3. **Virtual environment activation (`[profile].bash`):** Sources `.venv/bin/activate` so the project's Python virtual environment is immediately active in your Bash session.
+
+> **Alternative (without Flox):** If you already have Python 3.14+, `uv`, `bun`, and the required system libraries installed manually, you can set up the virtual environment directly with:
+>
+> ```bash
+> bun install
+> uv venv .venv
+> source .venv/bin/activate
+> uv sync
+> ```
 
 ### Environment Configuration
 
@@ -145,10 +193,12 @@ cp .env.example .env
 ```
 
 Required keys:
+
 - `HYDRA_DB_API_KEY`: Database API key
 - `ES_HOST`: Elasticsearch host URL
 - `ES_KB_HOST`: Elasticsearch Knowledge Base host URL
-- `ES_API_KEY`: Elasticsearch API key
+- `ES_URL`: Elasticsearch URL used by the embedding exporters
+- `ES_API_KEY`: Elasticsearch API key used by the embedding exporters
 
 ## Usage
 
@@ -191,14 +241,23 @@ python scripts/measure_safety.py --limit 1000 --verbose
 
 ### FAISS Vector Search
 
-Run the FAISS demonstration:
+Run the small demonstration script:
 
 ```bash
-# Ensure test data exists (convert sample to parquet first)
 python embedding/faiss_demo.py
+```
 
-# Or use the search pipeline
-# (Note: embedding/search.py is available on main branch)
+Search the committed 200-chunk sample. The sample carries chunk text but no
+vectors, so the search pipeline encodes it locally with the Jina document
+prompt before searching:
+
+```bash
+# Fast smoke test: truncate chunks to 128 tokens and encode one at a time
+python -m embedding.search --sample --max-length 128 --encode-batch-size 1 \
+  "a first time story at summer camp" --top-k 5
+
+# Search the full Parquet export written by embedding/get_chuncks.py
+python -m embedding.search "a cabin weekend" --top-k 10
 ```
 
 ### Web UI
@@ -297,7 +356,7 @@ See `CHANGELOG.md` for detailed change history.
 ### Latest Additions (Unreleased)
 
 - **embedding/** directory: FAISS vector search demonstration and test data
-- **samples/faiss_embedding_chunks_sample.jsonl**: 200 sample chunks with embeddings
+- **samples/faiss_embedding_chunks_sample.jsonl**: 200 sample chunks with text for local encoding
 - **embedding/data.py**: Test embedding vectors
 - **embedding/faiss_demo.py**: FAISS search demonstration script
 - **big-query/data_exploration.ipynb**: BigQuery data analysis notebook

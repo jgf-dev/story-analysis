@@ -14,7 +14,7 @@ The repository has been significantly expanded with new embedding and vector sea
   - `AGENTS.md`: Embedding-specific documentation
 - **New `samples/` directory**: Sample data for testing
   - `sample_stories.json`: Sample stories
-  - `faiss_embedding_chunks_sample.jsonl`: 200 sample chunks with embeddings
+  - `faiss_embedding_chunks_sample.jsonl`: 200 sample chunks with text (vectors are encoded locally)
 - **New `big-query/` directory**: Data exploration notebooks
   - `data_exploration.ipynb`: BigQuery analysis notebook
 - **Updated `pyproject.toml`**: Now requires Python 3.14+ with FAISS, CUDA, and GPU dependencies
@@ -25,7 +25,7 @@ semantic search and similarity matching across the story corpus using GPU-accele
 
 ## 10/20/2026
 
-[INGESTION_SPECIFICATION.md](docs/INGESTION_SPECIFICATION.md) 
+[INGESTION_SPECIFICATION.md](docs/INGESTION_SPECIFICATION.md)
 
 4.2 Databricks PySpark Distributed Execution (`jgf-dev/story-analysis`)
 
@@ -74,5 +74,3 @@ contains and what gets produced from it, so they are left for a deliberate
 decision rather than changed unilaterally. All open findings are tracked in the
 [**Nifty Corpus data analysis and NLP**](https://linear.app/jgfdev/project/nifty-corpus-data-analysis-and-nlp-fd2863838f42/overview)
 project.
-
- 

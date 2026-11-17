@@ -1,0 +1,46 @@
+{
+  "status": "complete",
+  "date": "2026-11-16",
+  "scope": "embedding/ vector search, production Parquet and sample JSONL paths",
+  "analysis_type": "read-mostly static architecture and risk analysis",
+  "outputs": [
+    "analysis_outputs/SUMMARY.md",
+    "analysis_outputs/RISKS.md",
+    "analysis_outputs/status.json"
+  ],
+  "repository_evidence": [
+    "embedding/data_loading.py",
+    "embedding/export_utils.py",
+    "embedding/get_chuncks.py",
+    "embedding/get_vectors.py",
+    "embedding/search.py",
+    "embedding/search_engine.py",
+    "embedding/text_encoder.py",
+    "embedding/vector_index.py",
+    "tests/test_embedding_search.py",
+    "docs/INSIGHT_PLATFORM.md",
+    "README.md",
+    "COMMENTS.md",
+    "pyproject.toml"
+  ],
+  "findings": {
+    "confirmed_documentation_mismatch": "README and COMMENTS describe GPU-accelerated FAISS search, while the search code constructs a direct faiss.IndexFlatIP and does not transfer it to GPU.",
+    "operational_risks": [
+      "each search process rebuilds a fresh full in-memory index",
+      "export/query model identity and task compatibility are not represented in the Parquet schema",
+      "no representative relevance or full-scale resource benchmark is covered by the focused tests"
+    ]
+  },
+  "verification": {
+    "static_inspection": "complete",
+    "git_diff_check": "passed",
+    "pytest": "passed: 98 tests, 26 subtests, 2 warnings in 7.56s",
+    "ruff": "passed for reviewed embedding and test Python modules"
+  },
+  "limitations": [
+    "No production Elasticsearch export or full-corpus Faiss index was opened.",
+    "No Jina model was downloaded or run.",
+    "No relevance benchmark was performed.",
+    "The skill-linked analysis policy and research pitfall reference files were absent from the installed skill directories."
+  ]
+}

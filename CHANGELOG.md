@@ -12,7 +12,39 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
-- `README.md` — comprehensive project documentation with repository structure, 
+- **Document vector-search architecture and risks.** `analysis_outputs/SUMMARY.md`, `analysis_outputs/RISKS.md`, and `analysis_outputs/status.json` map the `embedding/` search paths and record implementation evidence, the CPU-vs-GPU documentation mismatch, and unverified scale/relevance assumptions so future changes can start from an explicit system boundary.
+- **Declare the chunk-export serializer dependency.** `embedding/get_chuncks.py`
+  imports `orjson` directly, so `pyproject.toml` now declares it instead of
+  relying on an undeclared or transitive installation; a fresh project sync can
+  run the exporter without manual package installation.
+- **Production Faiss chunk search.** `embedding/search.py` streams the 1024-d
+  embeddings written by `embedding/get_chuncks.py` from `data/chunks/*.parquet`
+  into an exact cosine index (`faiss.IndexFlatIP` over L2-normalised vectors),
+  encodes plaintext queries with `jinaai/jina-embeddings-v5-text-small` and its
+  retrieval query prompt, and returns ranked `(story id, chunk index)` hits.
+  Peak build memory is one Parquet batch plus the ~4 GB index, so the ~1M-row
+  export is never loaded whole. `python -m embedding.search "..."` runs the
+  query path, and `--max-vectors` builds a partial index for smoke tests. The
+  model needs `torch`, `peft` and `pyarrow`, which are now declared in
+  `pyproject.toml` so a fresh `uv sync` can run the query path. Covered by
+  `tests/test_embedding_search.py`: shard streaming, schema and dimension
+  failures, cosine ranking, `max_vectors`, encoder validation, and the CLI's
+  missing-directory error. See `docs/INSIGHT_PLATFORM.md` for usage.
+- **Sample chunk search.** `embedding/search.py` can now build the same Faiss
+  index from `samples/faiss_embedding_chunks_sample.jsonl` (200 rows) through
+  `iter_sample_chunks` and `ChunkVectorIndex.from_sample`. The sample carries
+  chunk text but no vectors, so `JinaTextEncoder` encodes it locally with
+  `task="retrieval"` and the model's `document` prompt — the defaults used by
+  Elasticsearch's `semantic_text` field — while queries use the matching
+  `query` prompt. `python -m embedding.search --sample ...` runs the path, with
+  `--encode-batch-size` and `--max-length` to bound CPU smoke tests. Covered by
+  new tests for the committed sample, malformed JSONL rows, document-prompt
+  encoding, batching, and `max_vectors`; `docs/INSIGHT_PLATFORM.md`, `README.md`
+  and `embedding/AGENTS.md` now describe the sample accurately.
+- `README.md` — comprehensive project documentation with repository structure,
+  setup instructions, usage examples, and development guidelines. Provides a
+  single entry point for understanding the project.
+- `README.md` — comprehensive project documentation with repository structure,
   setup instructions, usage examples, and development guidelines. Provides a
   single entry point for understanding the project.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety
@@ -52,6 +84,34 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Changed
 
+- **Use `bun` in Flox activation and document Flox setup.** Switched the
+  `on-activate` hook in `.flox/env/manifest.toml` from `npm install` to
+  `bun install` (adding the `bun` package and updating `.flox/env/manifest.lock`
+  and `.flox/env.lock`), and replaced the legacy `python -m venv` /
+  `pip install -e .` instructions in `README.md` with Flox installation steps
+  and `flox activate` documentation explaining how `.flox/env/manifest.toml`
+  installs system/CUDA packages, runs `bun install`, creates and syncs `.venv`
+  with `uv`, and activates `.venv` in the shell.
+- **Publish only complete embedding exports.** `embedding/get_chuncks.py` and
+  `embedding/get_vectors.py` now write all slices into a staging directory and
+  publish it only after every slice succeeds, preserving the previous complete
+  export after a failed run; if interrupted during promotion, the previous
+  export is restored on the next search or export. Staging remains private and
+  writable until publication, then preserves the prior directory permissions or
+  applies the normal directory mode under the current umask on a first export.
+  Missing `ES_URL` or
+  `ES_API_KEY` now produces a concise CLI error. `README.md` and
+  `docs/INSIGHT_PLATFORM.md` document the required settings and publication
+  behavior.
+- **Split `embedding/search.py` into focused modules.** Extracted data
+  streaming (`embedding/data_loading.py`), the Faiss cosine index
+  (`embedding/vector_index.py`), the Jina v5 text encoder
+  (`embedding/text_encoder.py`), and the search engine
+  (`embedding/search_engine.py`) out of `embedding/search.py`.
+  `embedding/search.py` remains the CLI entrypoint (`python -m embedding.search`)
+  and re-export facade for backwards compatibility. Updated
+  `tests/test_embedding_search.py`, `docs/INSIGHT_PLATFORM.md`, and
+  `README.md` to match.
 - `AGENTS.md` — updated repository layout to include new `embedding/`, `samples/`,
   and `big-query/` directories. Updated conventions to reflect Python 3.14+
   requirement and added notes about FAISS indexes and vector data storage.

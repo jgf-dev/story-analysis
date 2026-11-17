@@ -21,8 +21,9 @@ pyarrow.pkg-path          = "python314Packages.pyarrow"
 pip.pkg-path              = "python314Packages.pip"
 uv.pkg-path               = "uv"
 pandas.pkg-path           = "python314Packages.pandas"
-transformers.pkg-path = "flox-cuda/python3Packages.transformers"
-transformers.pkg-group = "transformers"
+transformers.pkg-path     = "flox-cuda/python3Packages.transformers"
+transformers.pkg-group    = "transformers"
+bun.pkg-path              = "bun"
 
 
 ## Environment Variables ---------------------------------------------
@@ -39,7 +40,7 @@ ES_URL = "https://stories-ec0351.es.us-east4.gcp.elastic.cloud:443"
 ## -------------------------------------------------------------------
 [hook]
 on-activate = """
-  npm install
+  bun install
 
   export PYTHON_DIR="$FLOX_ENV_PROJECT/.venv"
   if [ ! -d "$PYTHON_DIR" ]; then
