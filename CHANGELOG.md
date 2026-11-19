@@ -44,9 +44,6 @@ Entries are grouped by the change types defined in Keep a Changelog:
 - `README.md` — comprehensive project documentation with repository structure,
   setup instructions, usage examples, and development guidelines. Provides a
   single entry point for understanding the project.
-- `README.md` — comprehensive project documentation with repository structure,
-  setup instructions, usage examples, and development guidelines. Provides a
-  single entry point for understanding the project.
 - `scripts/measure_safety.py` — samples the corpus and reports the safety
   verdict distribution plus the false-positive classes, so the effect of a rule
   change is measurable rather than asserted. Supports `--limit` and `--json`.
@@ -160,6 +157,14 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Fixed
 
+- **Hardened export recovery and cleaned up PR #9 review findings.**
+  `embedding/export_utils.py` (`recover_published_directory`) now rejects invalid
+  destination names, dangling destination symlinks, and symlinked or escaping
+  `.backup-*` directories via resolved `is_relative_to()` checks, covered by
+  `tests/test_embedding_export_utils.py`. `README.md` removes the stale
+  `embedding/faiss_demo.py` invocation in favour of `python -m embedding.search`,
+  and `embedding/search.py` extracts `_load_engine()` and `_render_results()`
+  from `main()`.
 - **Safety filter false positives quarantined 43% of the corpus.** Three
   independent defects in `pipeline/profiler.py` caused it, all now fixed:
   - The bare-numeral rule matched the words `thirteen|fourteen|fifteen` with no

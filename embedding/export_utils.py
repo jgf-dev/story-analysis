@@ -94,37 +94,76 @@ def publish_directory(staging: str | Path, destination: str | Path) -> None:
         shutil.rmtree(backup_dir, ignore_errors=True)
 
 
+def _backup_order(path: Path) -> tuple[int, str]:
+    try:
+        modified = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        modified = 0
+    return modified, path.name
+
+
+def _validate_recovery_destination(
+    destination: str | Path,
+) -> tuple[Path, Path] | None:
+    raw_dir = Path(destination)
+    if not raw_dir.name or raw_dir.name in {".", ".."}:
+        return None
+    if raw_dir.exists() or raw_dir.is_symlink():
+        return None
+    parent_dir = raw_dir.parent.resolve()
+    if not parent_dir.is_dir():
+        return None
+    output_dir = parent_dir / raw_dir.name
+    if (
+        not output_dir.is_relative_to(parent_dir)
+        or output_dir.parent != parent_dir
+        or output_dir.exists()
+        or output_dir.is_symlink()
+    ):
+        return None
+    return parent_dir, output_dir
+
+
+def _restore_backup(
+    backup_dir: Path, output_dir: Path, parent_dir: Path
+) -> bool | None:
+    if backup_dir.is_symlink() or not backup_dir.is_dir():
+        return False
+    resolved_backup = backup_dir.resolve()
+    if (
+        not resolved_backup.is_relative_to(parent_dir)
+        or resolved_backup.parent != parent_dir
+    ):
+        return False
+    try:
+        os.replace(backup_dir, output_dir)
+    except FileNotFoundError:
+        return None if output_dir.is_dir() else False
+    except OSError:
+        if output_dir.is_dir():
+            return None
+        raise
+    return True
+
+
 def recover_published_directory(destination: str | Path) -> bool:
     """Restore the newest preserved export if promotion was interrupted."""
-    output_dir = Path(destination)
-    if output_dir.exists():
+    validated = _validate_recovery_destination(destination)
+    if validated is None:
         return False
-    def backup_order(path: Path) -> tuple[int, str]:
-        try:
-            modified = path.stat().st_mtime_ns
-        except FileNotFoundError:
-            modified = 0
-        return modified, path.name
+    parent_dir, output_dir = validated
 
     backups = sorted(
-        output_dir.parent.glob(f".{output_dir.name}.backup-*"),
-        key=backup_order,
+        parent_dir.glob(f".{output_dir.name}.backup-*"),
+        key=_backup_order,
         reverse=True,
     )
     for backup_dir in backups:
-        try:
-            if not backup_dir.is_dir():
-                continue
-            os.replace(backup_dir, output_dir)
-        except FileNotFoundError:
-            if output_dir.is_dir():
-                return False
-            continue
-        except OSError:
-            if output_dir.is_dir():
-                return False
-            raise
-        return True
+        restored = _restore_backup(backup_dir, output_dir, parent_dir)
+        if restored is None:
+            return False
+        if restored:
+            return True
     return False
 
 

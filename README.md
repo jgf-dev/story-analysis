@@ -241,12 +241,6 @@ python scripts/measure_safety.py --limit 1000 --verbose
 
 ### FAISS Vector Search
 
-Run the small demonstration script:
-
-```bash
-python embedding/faiss_demo.py
-```
-
 Search the committed 200-chunk sample. The sample carries chunk text but no
 vectors, so the search pipeline encodes it locally with the Jina document
 prompt before searching:

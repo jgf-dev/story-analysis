@@ -146,3 +146,32 @@ def test_publish_directory_restores_previous_export_if_promotion_fails(
 
     assert (output / "old.parquet").read_text(encoding="utf-8") == "old"
     assert (staging / "new.parquet").read_text(encoding="utf-8") == "new"
+
+
+def test_recover_published_directory_ignores_symlinked_backup_and_destination(
+    tmp_path,
+):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+
+    export_root = tmp_path / "exports"
+    export_root.mkdir()
+    output = export_root / "chunks"
+    symlink_backup = export_root / ".chunks.backup-symlink"
+    symlink_backup.symlink_to(outside)
+
+    assert not recover_published_directory(output)
+    assert not output.exists()
+    assert outside.is_dir()
+
+    real_backup = export_root / ".chunks.backup-real"
+    real_backup.mkdir()
+    output.symlink_to(outside)
+    assert not recover_published_directory(output)
+    assert real_backup.is_dir()
+
+
+@pytest.mark.parametrize("bad_dest", ["", ".", "..", "/"])
+def test_recover_published_directory_rejects_invalid_destination_names(bad_dest):
+    assert not recover_published_directory(bad_dest)
