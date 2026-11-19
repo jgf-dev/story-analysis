@@ -154,32 +154,49 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_engine(args: argparse.Namespace) -> tuple[ChunkSearchEngine, Path]:
+    if args.sample:
+        engine = ChunkSearchEngine.from_sample(
+            batch_size=args.encode_batch_size,
+            max_vectors=args.max_vectors,
+            model_name=args.model,
+            device=args.device,
+            task=args.task,
+            max_length=args.max_length,
+        )
+        return engine, DEFAULT_SAMPLE_PATH
+
+    engine = ChunkSearchEngine.from_parquet(
+        args.parquet_dir,
+        batch_size=args.batch_size,
+        max_vectors=args.max_vectors,
+        model_name=args.model,
+        device=args.device,
+        task=args.task,
+    )
+    return engine, args.parquet_dir
+
+
+def _render_results(results: list[dict[str, object]], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(results, indent=2))
+        return
+    for result in results:
+        print(f"\n{result['query']}")
+        for rank, hit in enumerate(result["hits"], start=1):
+            print(
+                f"{rank:>3}. score={hit['score']:.4f} "
+                f"story={hit['story_id']} chunk={hit['chunk_index']}"
+            )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.threads is not None:
         faiss.omp_set_num_threads(args.threads)
 
     try:
-        if args.sample:
-            engine = ChunkSearchEngine.from_sample(
-                batch_size=args.encode_batch_size,
-                max_vectors=args.max_vectors,
-                model_name=args.model,
-                device=args.device,
-                task=args.task,
-                max_length=args.max_length,
-            )
-            source_name = DEFAULT_SAMPLE_PATH
-        else:
-            engine = ChunkSearchEngine.from_parquet(
-                args.parquet_dir,
-                batch_size=args.batch_size,
-                max_vectors=args.max_vectors,
-                model_name=args.model,
-                device=args.device,
-                task=args.task,
-            )
-            source_name = args.parquet_dir
+        engine, source_name = _load_engine(args)
     except (FileNotFoundError, EmbeddingDataError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -195,17 +212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         for query in args.queries
     ]
-
-    if args.as_json:
-        print(json.dumps(results, indent=2))
-    else:
-        for result in results:
-            print(f"\n{result['query']}")
-            for rank, hit in enumerate(result["hits"], start=1):
-                print(
-                    f"{rank:>3}. score={hit['score']:.4f} "
-                    f"story={hit['story_id']} chunk={hit['chunk_index']}"
-                )
+    _render_results(results, as_json=args.as_json)
     return 0
 
 
