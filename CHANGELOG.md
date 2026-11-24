@@ -12,6 +12,17 @@ Entries are grouped by the change types defined in Keep a Changelog:
 
 ### Added
 
+- **`docs/ARCHITECTURE.md`.** Single onboarding entry point for the whole
+  repository: the three deliverables (TTS catalogue, insight platform,
+  micro-drama videos), the `pipeline/` → `insights/` → `embedding/` module map,
+  entry points, data-flow and architecture diagrams, the SQLite/Parquet data
+  model, the key invariants (module-scope regexes, fail-loud ingest, atomic
+  exports, `== PASS` gating), a key-files table, how-to guides, and a
+  troubleshooting section. It also documents `pipeline/micro_drama/` (absent
+  from the README tree) and records the README/code drift found while writing it
+  (missing `embedding/data.py` and `faiss_demo.py`, `--output` vs
+  `--output-dir`, `measure_safety` `--csv`, UI port `5000` vs `8765`, and the
+  CPU-vs-GPU Faiss description). No code changed.
 - **Document vector-search architecture and risks.** `analysis_outputs/SUMMARY.md`, `analysis_outputs/RISKS.md`, and `analysis_outputs/status.json` map the `embedding/` search paths and record implementation evidence, the CPU-vs-GPU documentation mismatch, and unverified scale/relevance assumptions so future changes can start from an explicit system boundary.
 - **Declare the chunk-export serializer dependency.** `embedding/get_chuncks.py`
   imports `orjson` directly, so `pyproject.toml` now declares it instead of
