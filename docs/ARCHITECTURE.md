@@ -1,17 +1,24 @@
-# Architecture Overview
+---
+aliases: []
+tags: 
+created: Tuesday, November 24th 2026, 2:03:09 am
+modified: Tuesday, November 24th 2026, 1:20:33 pm
+---
 
-## System Summary
+## Architecture Overview
+
+### System Summary
 
 **Story Analysis** is a batch-processing monorepo, not a deployed web service. It turns an
-internal reference corpus of narrative fiction (the ~300K-row *Nifty Archive* export,
+internal reference corpus of narrative fiction (the ~300K-row _Nifty Archive_ export,
 `stories_clean.csv`, ~18.8 GB) into three deliverables:
 
-1. **A TTS-ready audio catalogue** — cleaned, safety-screened, quality-tiered, deduplicated
+1. **A TTS-ready audio catalogue**—cleaned, safety-screened, quality-tiered, deduplicated
    stories ranked for text-to-speech production.
-2. **An internal insight platform** — a local Flask UI over a SQLite catalogue with
+2. **An internal insight platform**—a local Flask UI over a SQLite catalogue with
    statistical dashboards, semantic search, NER combination search, and cheap local TTS
    audition.
-3. **Social micro-drama videos** — 9:16 vertical videos adapted from selected stories with
+3. **Social micro-drama videos**—9:16 vertical videos adapted from selected stories with
    neural TTS, kinetic captions, and a ffmpeg compositor.
 
 The corpus has unknown copyright and is **internal-only**: it is never shipped, and data
@@ -32,7 +39,7 @@ artifacts (`data/`, `*.sqlite*`, `*.parquet`) are gitignored.
 | Env / packaging | **Flox** (`.flox/env/manifest.toml`), `uv` (`uv.lock`), `bun` (stub `package.json`) |
 | Quality | `pytest` (103 tests), `ruff` |
 
-## High-Level Architecture
+### High-Level Architecture
 
 ```mermaid
 graph TB
@@ -84,7 +91,7 @@ graph TB
     CLI --> MD
 ```
 
-## Repository Structure
+### Repository Structure
 
 ```
 story-analysis/
@@ -134,7 +141,7 @@ story-analysis/
 └── big-query/                   # Data-exploration notebook
 ```
 
-## Three Separate Embedding Systems
+### Three Separate Embedding Systems
 
 A frequent source of confusion: there are **three** unrelated vector paths. They are not
 interchangeable.
@@ -147,36 +154,36 @@ interchangeable.
 
 `embedding/get_chuncks.py` writes `data/chunks/` (schema `id, chunk_index, …,
 embedding float32[1024]`). `embedding/get_vectors.py` writes `data/vectors/` with a
-*different* schema (`doc_id, record_id, chunk_index, embedding float16[1024]`) and is **not**
+_different_ schema (`doc_id, record_id, chunk_index, embedding float16[1024]`) and is **not**
 read by `embedding.search`.
 
-## Core Modules
+### Core Modules
 
-### `pipeline/` — per-story processing chain
+#### `pipeline/`—per-story processing chain
 
 `PipelineOrchestrator.process_raw_story` runs each story through, in order:
 
-1. `StoryProfiler.clean_text` — HTML/entity decode, NFKC, mojibake fixes, Usenet header and
+1. `StoryProfiler.clean_text`—HTML/entity decode, NFKC, mojibake fixes, Usenet header and
    anonymiser-footer stripping, paragraph normalisation.
-2. `StoryProfiler.audit_safety` — three preemptive verdicts (below).
-3. `StoryProfiler.calculate_text_metrics` — word/char/sentence/paragraph counts, dialogue
+2. `StoryProfiler.audit_safety`—three preemptive verdicts (below).
+3. `StoryProfiler.calculate_text_metrics`—word/char/sentence/paragraph counts, dialogue
    ratio, TTR, sensory and explicit density, estimated audio minutes.
-4. `StoryQualityScorer.evaluate` — five weighted dimensions summing to 0–100 → `QualityTier`.
-5. `StoryDeduplicator.process_story` — exact normalised SHA-256, then MinHash + Jaccard.
-6. `StoryTaxonomyTagger.tag_story` — tropes, archetypes, setting, heat, POV, pacing,
+4. `StoryQualityScorer.evaluate`—five weighted dimensions summing to 0–100 → `QualityTier`.
+5. `StoryDeduplicator.process_story`—exact normalised SHA-256, then MinHash + Jaccard.
+6. `StoryTaxonomyTagger.tag_story`—tropes, archetypes, setting, heat, POV, pacing,
    duration tier.
-7. `TTSPrioritizer.generate_tts_metadata` — suitability, voice profile, SSML segments.
+7. `TTSPrioritizer.generate_tts_metadata`—suitability, voice profile, SSML segments.
 
 **Safety verdicts (in precedence order).** Every consumer gates on `== PASS`:
 
 | Verdict | Trigger | Downstream |
 | --- | --- | --- |
-| `FAIL_UNDERAGE_RISK` | Age/CSAM indicator or underage tag — **fail-closed** | Quarantined |
+| `FAIL_UNDERAGE_RISK` | Age/CSAM indicator or underage tag—**fail-closed** | Quarantined |
 | `FAIL_EXTREME_VIOLENCE` | necrophilia, snuff, bestiality, zoophilia | Quarantined |
 | `FLAGGED_MANUAL_REVIEW` | abuse, rape, murder, assault, suicide | Quarantined but triageable |
 | `PASS` | none | Eligible for TTS/embeddings/UI |
 
-### `pipeline/micro_drama/` — social video generator
+#### `pipeline/micro_drama/`—social video generator
 
 `MicroDramaPipeline.process_story` adapts a story into a 28–35s script
 (`ScriptAdapter`, with an SFW compliance filter + sensory substitutions), synthesises
@@ -186,7 +193,7 @@ multi-voice audio with `edge-tts` plus a procedural FFmpeg drone, builds ASS/SRT
 `ready_for_user_approval`. Requires `ffmpeg`, `ffprobe`, and the DejaVu fonts at
 `/usr/share/fonts/truetype/dejavu/`.
 
-### `insights/` — full-corpus platform
+#### `insights/`—full-corpus platform
 
 `insights.corpus_prep.FullCorpusIngester` streams the CSV with a quote-balanced reader and a
 byte-offset checkpoint (`meta.ingest_state`), runs `process_rows` across a `fork` pool, then
@@ -199,7 +206,7 @@ Downstream readers: `analysis.py` (dashboards), `semantic.py` (TF-IDF+SVD+KMeans
 `entity_mentions`), and `ui.py` (Flask: `/`, `/search`, `/combo`, `/story/<id>`,
 `/api/health`).
 
-### `embedding/` — dense chunk search
+#### `embedding/`—dense chunk search
 
 `get_chuncks.py` scans ES in 4 slices via `ProcessPoolExecutor` and writes one Parquet shard
 per slice **into a staging directory**, publishing only after all slices finish
@@ -209,12 +216,12 @@ shards, `vector_index.ChunkVectorIndex` L2-normalises into `faiss.IndexFlatIP`,
 `text_encoder.JinaTextEncoder` encodes queries (Jina v5 `query`/`document` prompts), and
 `search_engine.ChunkSearchEngine` returns ranked `(story_id, chunk_index, score)`.
 
-### `parse/parse.py` — documents
+#### `parse/parse.py`—documents
 
 Thin wrapper over `unstructured-transform-client` (parse/extract/poll). **Not wired into the
 pipeline**; tracked as a coverage gap (STO-1250).
 
-## Entry Points
+### Entry Points
 
 | Command | Module | Produces |
 | --- | --- | --- |
@@ -231,9 +238,9 @@ pipeline**; tracked as a coverage gap (STO-1250).
 | `python scripts/measure_safety.py --csv … --limit 5000` | `scripts.measure_safety` | Safety verdict distribution |
 | `python scripts/elasticsearch/decompress_reindex.py` | reindex script | `story_text_plain` ES index |
 
-## Data Flows
+### Data Flows
 
-### Batch catalogue (`pipeline.cli`)
+#### Batch catalogue (`pipeline.cli`)
 
 ```mermaid
 sequenceDiagram
@@ -254,7 +261,7 @@ sequenceDiagram
     CLI-->>User: catalog + candidates + report + vector index
 ```
 
-### Full-corpus ingest (`insights.corpus_prep`)
+#### Full-corpus ingest (`insights.corpus_prep`)
 
 ```mermaid
 sequenceDiagram
@@ -275,7 +282,7 @@ sequenceDiagram
     end
 ```
 
-## Data Model
+### Data Model
 
 `pipeline/schemas.py` defines `RawStory` → `ProcessedStory`, with enums `SafetyVerdict`,
 `QualityTier`, `HeatLevel`, `AudioDurationTier`, and nested `SafetyAudit`, `QualityBreakdown`,
@@ -283,13 +290,13 @@ sequenceDiagram
 
 `insights/corpus_prep.SCHEMA` defines the SQLite catalogue:
 
-- `stories` — one row per source record (canonical **or** duplicate): metadata, metrics,
+- `stories`—one row per source record (canonical **or** duplicate): metadata, metrics,
   safety/quality/taxonomy columns, `exact_hash`, `sig` (MinHash BLOB), `is_canonical`,
   `dup_of`, `preview`.
-- `story_text` — `id → zlib-compressed full_text` (canonical, PASS, Tier 1/2 only).
-- `meta` — `ingest_state` (rows_done, last_offset, error_types).
+- `story_text`—`id → zlib-compressed full_text` (canonical, PASS, Tier 1/2 only).
+- `meta`—`ingest_state` (rows_done, last_offset, error_types).
 
-## Key Invariants and Conventions
+### Key Invariants and Conventions
 
 - **Regexes at module scope.** All cleaning/safety patterns live in `pipeline/profiler.py`
   module scope and are registered in `REGEX_PATTERNS`; `validate_patterns()` runs at import.
@@ -307,7 +314,7 @@ sequenceDiagram
   download URL must never be committed or logged.
 - **Every change is recorded in `CHANGELOG.md`** under `[Unreleased]` (see `AGENTS.md`).
 
-## Key Files Reference
+### Key Files Reference
 
 | File | Purpose | Modify for |
 | --- | --- | --- |
@@ -323,7 +330,7 @@ sequenceDiagram
 | `.flox/env/manifest.toml` | System deps + activation | Environment/tooling |
 | `pyproject.toml` | Python deps, Python ≥3.14 | Dependency changes |
 
-## How-To Guides
+### How-To Guides
 
 **Add a safety rule.** Add a `re.compile(...)` to the correct module-scope list in
 `pipeline/profiler.py` (`UNDERAGE_INDICATORS`, `EXTREME_VIOLENCE_INDICATORS`, or
@@ -345,7 +352,7 @@ and `process_row`; then update `insights/analysis.py` readers.
 **Add a UI route.** Add a handler inside `InsightApp._register_routes` in `insights/ui.py`;
 the HTML template is inlined in `BASE`.
 
-## Testing and Verification
+### Testing and Verification
 
 ```bash
 # Run the suite (103 tests)
@@ -355,7 +362,7 @@ python -m ruff check <files>
 ```
 
 Test modules: `tests/test_pipeline.py` (profiler/safety precision/quality/dedup/tts/cli),
-`tests/test_insights.py` (ingest/checkpoint/errors/analysis/ner/ui), 
+`tests/test_insights.py` (ingest/checkpoint/errors/analysis/ner/ui),
 `tests/test_embedding_search.py` (loading/index/encoder/CLI), and
 `tests/test_embedding_export_utils.py` (staged publish + recovery).
 
@@ -364,7 +371,7 @@ Test modules: `tests/test_pipeline.py` (profiler/safety precision/quality/dedup/
 > `LD_LIBRARY_PATH=/nix/store/<hash>-gcc-16.2.0-lib/lib:$LD_LIBRARY_PATH`. This is an
 > environment issue, not a code failure.
 
-## Dependencies
+### Dependencies
 
 Runtime (`pyproject.toml`): `dotenv`, `edge-tts`, `elasticsearch`, `faiss-gpu-cuvs`, `flask`,
 `numpy[cuda,gpu]`, `orjson`, `pandas`, `peft`, `pillow`, `pyarrow`, `scikit-learn`, `torch`,
@@ -375,20 +382,20 @@ Runtime (`pyproject.toml`): `dotenv`, `edge-tts`, `elasticsearch`, `faiss-gpu-cu
 Required environment (`.env`): `ES_URL`, `ES_API_KEY` (exporters); `ES_HOST`, `ES_KB_HOST`,
 `HYDRA_DB_API_KEY` (other integrations).
 
-## Troubleshooting
+### Troubleshooting
 
-- **`ImportError: libstdc++.so.6`** — see the note above; run inside `flox activate` or set
+- **`ImportError: libstdc++.so.6`**—see the note above; run inside `flox activate` or set
   `LD_LIBRARY_PATH`.
-- **`no Parquet shards found in data/chunks`** — run `python -m embedding.get_chuncks` first
+- **`no Parquet shards found in data/chunks`**—run `python -m embedding.get_chuncks` first
   (needs `ES_URL`/`ES_API_KEY`), or use `--sample`.
-- **UI search says "Semantic index not built"** — run `python -m insights.semantic` (the
+- **UI search says "Semantic index not built"**—run `python -m insights.semantic` (the
   `main()` entrypoint, which writes `pipeline.pkl`); `run_semantic()` writes vectors but not
   the query pipeline.
-- **Ingest exits 1** — expected when rows failed; read `error_types` in
+- **Ingest exits 1**—expected when rows failed; read `error_types` in
   `<db>.ingest_result.json`. The checkpoint was held, so re-running retries the failed rows.
-- **`pipeline.cli` `--output` unrecognised** — the flag is `--output-dir`/`-o`.
+- **`pipeline.cli` `--output` unrecognised**—the flag is `--output-dir`/`-o`.
 
-## Known Documentation/Code Drift
+### Known Documentation/Code Drift
 
 These are accurate as of this document; treat the code as authoritative:
 
